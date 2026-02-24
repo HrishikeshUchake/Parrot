@@ -59,12 +59,12 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
 
     # Step 2 – graph-neighbor enrichment via Neo4j traversal
     seen_ids = {r.post.id for r in results}
-    neighbor_post_ids: list[int] = []
+    neighbor_post_ids: list[str] = []
 
     for r in results[: settings.default_top_k]:          # expand from top-k seeds
         neighbors = _store.graph_neighbors(r.post.id, hops=1)
         for n in neighbors:
-            nid = int(n["id"])
+            nid = str(n["id"])
             if nid not in seen_ids:
                 seen_ids.add(nid)
                 neighbor_post_ids.append(nid)

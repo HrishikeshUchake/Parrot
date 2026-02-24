@@ -1,4 +1,4 @@
-"""Synthesis node – generates final answer with citations using Llama."""
+"""Synthesis node generates final answer with citations using Llama."""
 from __future__ import annotations
 import logging
 
@@ -17,11 +17,16 @@ def _format_context(results: list[SearchResult]) -> str:
     lines = []
     for r in results:
         p = r.post
-        body_snippet = p.body[:400] + ("..." if len(p.body) > 400 else "")
+        snippet = p.content[:400] + ("..." if len(p.content) > 400 else "")
+        author = p.account_acct or p.account_username or "unknown"
+        engagement = (
+            f"reblogs={p.reblogs_count}  favs={p.favourites_count}  "
+            f"replies={p.replies_count}"
+        )
         lines.append(
-            f"[Post #{p.id}] Score={r.score:.2f} | Tags={p.tags}\n"
-            f"Title: {p.title}\n"
-            f"Body: {body_snippet}"
+            f"[Status #{p.id}] Score={r.score:.2f} | @{author} | {engagement}\n"
+            f"Tags={p.tags}\n"
+            f"Content: {snippet}"
         )
     return "\n---\n".join(lines)
 

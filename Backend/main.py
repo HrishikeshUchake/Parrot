@@ -51,7 +51,7 @@ try:
         }
 
 except ImportError as e:
-    logger.warning("FastAPI not available (%s) – API server disabled.", e)
+    logger.warning("FastAPI not available (%s) API server disabled.", e)
     app = None  # type: ignore
 
 
@@ -59,7 +59,7 @@ except ImportError as e:
 async def interactive_loop() -> None:
     from .agents.graph import rag_graph
 
-    print("\n🦜 Parrot Agentic RAG – type your query (Ctrl-C to exit)\n")
+    print("\n Parrot Agentic RAG type your query (Ctrl-C to exit)\n")
     while True:
         try:
             query = input("Query> ").strip()

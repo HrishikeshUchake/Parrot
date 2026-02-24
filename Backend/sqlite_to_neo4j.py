@@ -1,23 +1,26 @@
 """
 sqlite_to_neo4j.py
 ==================
-Ingestion pipeline: SQLite posts → Neo4j graph + vector index.
+Ingestion pipeline: SQLite Mastodon posts → Neo4j graph + vector index.
 
 Run from the repo root:
     python -m Backend.sqlite_to_neo4j
 
 Pre-requisites:
   1. Neo4j 5.11+ running locally (or Aura).  Default bolt://localhost:7687
-  2. OLLAMA not required for this step.
+  2. Mastodon statuses already fetched into SQLite via:
+         python -m Backend.fetch_mastodon
   3. A .env file (or environment variables) with NEO4J_PASSWORD if changed.
 
 What it creates in Neo4j
 ------------------------
-  (:Post  {id, title, body, tags_json, views, user_id, embedding})
-  (:Tag   {name})
-  (:User  {id})
+  (:Post    {id, content, created_at, account_id, account_username,
+             account_acct, tags_json, reblogs_count, favourites_count,
+             replies_count, url, visibility, language, embedding})
+  (:Tag     {name})
+  (:Account {id, username, display_name, acct})
   (:Post)-[:HAS_TAG]->(:Tag)
-  (:User)-[:AUTHORED]->(:Post)
+  (:Account)-[:AUTHORED]->(:Post)
   VECTOR INDEX post_embeddings  ON Post(embedding)  cosine / 384 dims
 """
 from __future__ import annotations
@@ -35,32 +38,43 @@ from Backend.config import settings
 
 
 # ── 1. Load posts from SQLite ─────────────────────────────────────────────────
+
 def load_posts_from_sqlite() -> list[dict]:
     conn = sqlite3.connect(settings.db_path)
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        "SELECT id, title, body, tags, reactions, views, userId FROM posts"
+        """SELECT id, content, created_at,
+                  account_id, account_username, account_display_name, account_acct,
+                  tags, reblogs_count, favourites_count, replies_count,
+                  url, visibility, language
+           FROM posts"""
     ).fetchall()
     conn.close()
 
     posts = []
     for r in rows:
-        title = r["title"] or ""
-        body = r["body"] or ""
-        text = f"{title}\n\n{body}".strip()
-        if not text:
+        content = (r["content"] or "").strip()
+        if not content:
             continue
         tags = json.loads(r["tags"]) if r["tags"] else []
         posts.append(
             {
-                "id": r["id"],
-                "title": title,
-                "body": body,
+                "id": str(r["id"]),
+                "content": content,
+                "created_at": r["created_at"] or "",
+                "account_id": str(r["account_id"] or ""),
+                "account_username": r["account_username"] or "",
+                "account_display_name": r["account_display_name"] or "",
+                "account_acct": r["account_acct"] or "",
                 "tags": tags,
                 "tags_json": json.dumps(tags),
-                "views": r["views"] or 0,
-                "user_id": r["userId"] or 0,
-                "text": text,
+                "reblogs_count": int(r["reblogs_count"] or 0),
+                "favourites_count": int(r["favourites_count"] or 0),
+                "replies_count": int(r["replies_count"] or 0),
+                "url": r["url"] or "",
+                "visibility": r["visibility"] or "public",
+                "language": r["language"] or "",
+                "text": content,
             }
         )
     return posts
@@ -96,20 +110,30 @@ _ENSURE_VECTOR_INDEX = """
 
 _UPSERT_POST = """
     MERGE (p:Post {id: $id})
-    SET p.title     = $title,
-        p.body      = $body,
-        p.tags_json = $tags_json,
-        p.views     = $views,
-        p.user_id   = $user_id,
-        p.embedding = $embedding
+    SET p.content              = $content,
+        p.created_at           = $created_at,
+        p.account_id           = $account_id,
+        p.account_username     = $account_username,
+        p.account_acct         = $account_acct,
+        p.tags_json            = $tags_json,
+        p.reblogs_count        = $reblogs_count,
+        p.favourites_count     = $favourites_count,
+        p.replies_count        = $replies_count,
+        p.url                  = $url,
+        p.visibility           = $visibility,
+        p.language             = $language,
+        p.embedding            = $embedding
     WITH p
     FOREACH (tag IN $tags |
         MERGE (t:Tag {name: tag})
         MERGE (p)-[:HAS_TAG]->(t)
     )
     WITH p
-    MERGE (u:User {id: $user_id})
-    MERGE (u)-[:AUTHORED]->(p)
+    MERGE (a:Account {id: $account_id})
+    ON CREATE SET a.username     = $account_username,
+                  a.display_name = $account_display_name,
+                  a.acct         = $account_acct
+    MERGE (a)-[:AUTHORED]->(p)
 """
 
 
@@ -135,12 +159,20 @@ def upsert_to_neo4j(posts: list[dict]) -> None:
             session.run(
                 _UPSERT_POST,
                 id=p["id"],
-                title=p["title"],
-                body=p["body"],
+                content=p["content"],
+                created_at=p["created_at"],
+                account_id=p["account_id"],
+                account_username=p["account_username"],
+                account_display_name=p["account_display_name"],
+                account_acct=p["account_acct"],
                 tags_json=p["tags_json"],
                 tags=p["tags"],
-                views=p["views"],
-                user_id=p["user_id"],
+                reblogs_count=p["reblogs_count"],
+                favourites_count=p["favourites_count"],
+                replies_count=p["replies_count"],
+                url=p["url"],
+                visibility=p["visibility"],
+                language=p["language"],
                 embedding=p["embedding"],
             )
             if i % 10 == 0 or i == len(posts):
@@ -150,13 +182,17 @@ def upsert_to_neo4j(posts: list[dict]) -> None:
     driver.close()
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# ── Entry-point ───────────────────────────────────────────────────────────────
+
 if __name__ == "__main__":
     print(f"Connecting to Neo4j at: {settings.neo4j_uri}")
     print(f"Reading SQLite from: {settings.db_path}")
 
     posts = load_posts_from_sqlite()
-    print(f"Loaded {len(posts)} posts from SQLite.")
+    if not posts:
+        print("No posts found in SQLite. Run `python -m Backend.fetch_mastodon` first.")
+    else:
+        print(f"Loaded {len(posts)} statuses from SQLite.")
+        posts = embed(posts)
+        upsert_to_neo4j(posts)
 
-    posts = embed(posts)
-    upsert_to_neo4j(posts)

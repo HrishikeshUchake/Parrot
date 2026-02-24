@@ -9,6 +9,13 @@ from typing import Generator
 from ..config import settings
 from .models import Post, QueryCache
 
+_SELECT_COLS = """
+    id, content, created_at,
+    account_id, account_username, account_display_name, account_acct,
+    tags, reblogs_count, favourites_count, replies_count,
+    url, visibility, language
+"""
+
 
 @contextmanager
 def get_connection(path: str = settings.db_path) -> Generator[sqlite3.Connection, None, None]:
@@ -25,61 +32,66 @@ def get_connection(path: str = settings.db_path) -> Generator[sqlite3.Connection
 
 
 class PostRepository:
-    """CRUD operations for social media posts."""
+    """CRUD operations for Mastodon posts stored in SQLite."""
 
     def __init__(self, db_path: str = settings.db_path) -> None:
         self._db_path = db_path
 
     def get_all(self) -> list[Post]:
         with get_connection(self._db_path) as conn:
-            rows = conn.execute(
-                "SELECT id, title, body, tags, reactions, views, userId FROM posts"
-            ).fetchall()
+            rows = conn.execute(f"SELECT {_SELECT_COLS} FROM posts").fetchall()
         return [self._row_to_post(r) for r in rows]
 
-    def get_by_id(self, post_id: int) -> Post | None:
+    def get_by_id(self, post_id: str) -> Post | None:
         with get_connection(self._db_path) as conn:
             row = conn.execute(
-                "SELECT id, title, body, tags, reactions, views, userId FROM posts WHERE id = ?",
-                (post_id,),
+                f"SELECT {_SELECT_COLS} FROM posts WHERE id = ?",
+                (str(post_id),),
             ).fetchone()
         return self._row_to_post(row) if row else None
 
-    def get_by_ids(self, post_ids: list[int]) -> list[Post]:
+    def get_by_ids(self, post_ids: list[str]) -> list[Post]:
         if not post_ids:
             return []
         placeholders = ",".join("?" * len(post_ids))
         with get_connection(self._db_path) as conn:
             rows = conn.execute(
-                f"SELECT id, title, body, tags, reactions, views, userId FROM posts WHERE id IN ({placeholders})",
-                post_ids,
+                f"SELECT {_SELECT_COLS} FROM posts WHERE id IN ({placeholders})",
+                [str(pid) for pid in post_ids],
             ).fetchall()
         return [self._row_to_post(r) for r in rows]
 
     def keyword_search(self, query: str, limit: int = 10) -> list[Post]:
-        """Full-text keyword search using LIKE."""
+        """Full-text keyword search using LIKE over content, tags and account fields."""
         pattern = f"%{query}%"
         with get_connection(self._db_path) as conn:
             rows = conn.execute(
-                """SELECT id, title, body, tags, reactions, views, userId FROM posts
-                   WHERE title LIKE ? OR body LIKE ? OR tags LIKE ?
+                f"""SELECT {_SELECT_COLS} FROM posts
+                   WHERE content LIKE ? OR tags LIKE ?
+                      OR account_username LIKE ? OR account_acct LIKE ?
                    LIMIT ?""",
-                (pattern, pattern, pattern, limit),
+                (pattern, pattern, pattern, pattern, limit),
             ).fetchall()
         return [self._row_to_post(r) for r in rows]
 
     @staticmethod
     def _row_to_post(row: sqlite3.Row) -> Post:
         tags = json.loads(row["tags"]) if row["tags"] else []
-        reactions = json.loads(row["reactions"]) if row["reactions"] else {}
         return Post(
-            id=row["id"],
-            title=row["title"] or "",
-            body=row["body"] or "",
+            id=str(row["id"]),
+            content=row["content"] or "",
+            created_at=row["created_at"] or "",
+            account_id=str(row["account_id"] or ""),
+            account_username=row["account_username"] or "",
+            account_display_name=row["account_display_name"] or "",
+            account_acct=row["account_acct"] or "",
             tags=tags,
-            reactions=reactions,
-            views=row["views"] or 0,
-            user_id=row["userId"] or 0,
+            reblogs_count=int(row["reblogs_count"] or 0),
+            favourites_count=int(row["favourites_count"] or 0),
+            replies_count=int(row["replies_count"] or 0),
+            url=row["url"] or "",
+            visibility=row["visibility"] or "public",
+            language=row["language"] or "",
         )
 
 

@@ -3,6 +3,7 @@ requests
 pandas
 numpy
 sqlite-utils
+Mastodon.py
 
 # Graph + vector store
 neo4j

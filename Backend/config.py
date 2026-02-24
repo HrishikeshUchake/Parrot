@@ -45,5 +45,12 @@ class Settings(BaseSettings):
     # --- Query cache (SQLite table) ---
     cache_ttl_seconds: int = 3600
 
+    # --- Mastodon ingestion ---
+    mastodon_instance_url: str = "https://mastodon.social"
+    mastodon_access_token: str = ""          # optional; leave empty for public timeline
+    mastodon_fetch_limit: int = 200          # total statuses to ingest per run
+    mastodon_page_size: int = 40             # max per API page (Mastodon cap = 40)
+    mastodon_local_only: bool = False        # True = only statuses from that instance
+
 
 settings = Settings()
