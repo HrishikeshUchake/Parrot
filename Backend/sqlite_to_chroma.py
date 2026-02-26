@@ -6,14 +6,16 @@ from chromadb.config import Settings
 
 DB_PATH = "store_social_data.db"
 CHROMA_PATH = "./chroma_store"
-COLLECTION_NAME = "mock_posts"
+COLLECTION_NAME = "mastodon_posts"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 conn = sqlite3.connect(DB_PATH)
 cursor = conn.cursor()
 
 cursor.execute("""
-SELECT id, title, body, tags, reactions, views, userId
+SELECT id, content, account_id, account_username, account_acct,
+       tags, reblogs_count, favourites_count, replies_count,
+       visibility, language
 FROM posts
 """)
 
@@ -24,22 +26,25 @@ ids = []
 documents = []
 metadatas = []
 
-for (pid, title, body, tags, reactions, views, userId) in rows:
-    title = title or ""
-    body = body or ""
-    text = (title + "\n\n" + body).strip()
-
+for (pid, content, account_id, account_username, account_acct,
+     tags, reblogs_count, favourites_count, replies_count,
+     visibility, language) in rows:
+    text = (content or "").strip()
     if not text:
         continue
 
     ids.append(str(pid))
     documents.append(text)
-
     metadatas.append({
-        "userId": userId,
-        "views": views,
-        "has_reactions": reactions is not None,
-        "tags": tags  # already JSON text
+        "account_id": account_id or "",
+        "account_username": account_username or "",
+        "account_acct": account_acct or "",
+        "reblogs_count": reblogs_count or 0,
+        "favourites_count": favourites_count or 0,
+        "replies_count": replies_count or 0,
+        "visibility": visibility or "public",
+        "language": language or "",
+        "tags": tags or "[]",   # JSON string
     })
 
 print(f"Loaded {len(documents)} posts from SQLite.")

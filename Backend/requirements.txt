@@ -1,6 +1,35 @@
+# Data fetching & storage
 requests
 pandas
 numpy
-chromadb
+sqlite-utils
+Mastodon.py
+
+# Graph + vector store
+neo4j
+
+# Embeddings
 sentence-transformers
-torch`
+torch
+
+# LangGraph / LangChain orchestration
+langgraph
+langchain
+langchain-community
+langchain-ollama
+
+# Ollama client
+ollama
+
+# Validation & settings
+pydantic
+pydantic-settings
+
+# API (optional)
+fastapi
+uvicorn[standard]
+httpx
+
+# Utilities
+python-dotenv
+tenacity
