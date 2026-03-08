@@ -15,9 +15,6 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # --- Database ---
-    db_path: str = str(BASE_DIR / "store_social_data.db")
-
     # --- Neo4j graph + vector store ---
     neo4j_uri: str = "bolt://localhost:7687"
     neo4j_user: str = "neo4j"
@@ -25,6 +22,8 @@ class Settings(BaseSettings):
     neo4j_database: str = "neo4j"
     neo4j_vector_index: str = "post_embeddings"
     neo4j_embedding_dim: int = 384          # all-MiniLM-L6-v2 output dim
+    neo4j_message_vector_index: str = "message_embeddings"
+    neo4j_comment_vector_index: str = "comment_embeddings"
 
     # --- Embedding model ---
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
@@ -47,10 +46,16 @@ class Settings(BaseSettings):
 
     # --- Mastodon ingestion ---
     mastodon_instance_url: str = "https://mastodon.social"
-    mastodon_access_token: str = ""          # optional; leave empty for public timeline
+    # optional; leave empty for public timeline
+    mastodon_access_token: str = ""
     mastodon_fetch_limit: int = 200          # total statuses to ingest per run
-    mastodon_page_size: int = 40             # max per API page (Mastodon cap = 40)
-    mastodon_local_only: bool = False        # True = only statuses from that instance
+    # max per API page (Mastodon cap = 40)
+    mastodon_page_size: int = 40
+    # True = only statuses from that instance
+    mastodon_local_only: bool = False
+
+    # --- User data ingestion ---
+    user_data_import_batch_size: int = 64
 
 
 settings = Settings()

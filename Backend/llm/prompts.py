@@ -33,15 +33,15 @@ Reply with ONE word only: "simple" or "advanced"
 
 SYNTHESIS_PROMPT = """You are a helpful social media analytics assistant.
 
-Answer the user's question based ONLY on the retrieved posts below.
-Be concise, factual, and cite post IDs where relevant (e.g. [Post #12]).
-If asked about counts or statistics, compute them from the posts provided.
+Answer the user's question based ONLY on the retrieved context below.
+Be concise, factual, and cite IDs where relevant (e.g. [Post #12], [Message #abc]).
+If asked about counts or statistics, compute them from the retrieved context.
 If asked about a specific post title, search for it in the context below.
-Do NOT say you lack context if posts are provided — use them directly.
+Do NOT say you lack context if relevant context is provided — use it directly.
 
 User question: {query}
 
-Retrieved posts:
+Retrieved context:
 {context}
 
 Answer:"""

@@ -21,6 +21,28 @@ _CREATE_VECTOR_INDEX = """
     }}
 """
 
+_CREATE_MESSAGE_VECTOR_INDEX = """
+    CREATE VECTOR INDEX {index} IF NOT EXISTS
+    FOR (m:Message) ON (m.embedding)
+    OPTIONS {{
+        indexConfig: {{
+            `vector.dimensions`: {dim},
+            `vector.similarity_function`: 'cosine'
+        }}
+    }}
+"""
+
+_CREATE_COMMENT_VECTOR_INDEX = """
+    CREATE VECTOR INDEX {index} IF NOT EXISTS
+    FOR (c:Comment) ON (c.embedding)
+    OPTIONS {{
+        indexConfig: {{
+            `vector.dimensions`: {dim},
+            `vector.similarity_function`: 'cosine'
+        }}
+    }}
+"""
+
 _UPSERT_POST = """
     MERGE (p:Post {id: $id})
     SET p.content              = $content,
@@ -46,6 +68,79 @@ _UPSERT_POST = """
     ON CREATE SET a.username     = $account_username,
                   a.acct         = $account_acct
     MERGE (a)-[:AUTHORED]->(p)
+"""
+
+_UPSERT_USER_POST = """
+    MERGE (p:Post {id: $id})
+    SET p.content                 = $content,
+        p.created_at              = $created_at,
+        p.account_id              = $account_id,
+        p.account_username        = $account_username,
+        p.account_acct            = $account_acct,
+        p.tags_json               = $tags_json,
+        p.reblogs_count           = $reblogs_count,
+        p.favourites_count        = $favourites_count,
+        p.replies_count           = $replies_count,
+        p.url                     = $url,
+        p.visibility              = $visibility,
+        p.language                = $language,
+        p.embedding               = $embedding,
+        p.source                  = $source,
+        p.title                   = $title,
+        p.user_context_username   = $user_context_username
+    WITH p
+    FOREACH (tag IN $tags |
+        MERGE (t:Tag {name: tag})
+        MERGE (p)-[:HAS_TAG]->(t)
+    )
+    WITH p
+    MERGE (a:Account {id: $account_id})
+    ON CREATE SET a.username = $account_username,
+                  a.acct     = $account_acct
+    MERGE (a)-[:AUTHORED]->(p)
+    WITH p
+    MERGE (u:User {username: $user_context_username})
+    MERGE (u)-[:CAN_SEE]->(p)
+"""
+
+_UPSERT_MESSAGE = """
+    MERGE (m:Message {id: $id})
+    SET m.sender_name            = $sender_name,
+        m.receiver_name          = $receiver_name,
+        m.text                   = $text,
+        m.date                   = $date,
+        m.time_ms                = $time_ms,
+        m.source                 = $source,
+        m.user_context_username  = $user_context_username,
+        m.embedding              = $embedding
+    WITH m
+    MERGE (s:User {username: $sender_name})
+    MERGE (r:User {username: $receiver_name})
+    MERGE (s)-[:SENT]->(m)
+    MERGE (m)-[:TO]->(r)
+    WITH m
+    MERGE (u:User {username: $user_context_username})
+    MERGE (u)-[:CAN_SEE]->(m)
+"""
+
+_UPSERT_COMMENT = """
+    MERGE (c:Comment {id: $id})
+    SET c.post_id                = $post_id,
+        c.commenter_name         = $commenter_name,
+        c.content                = $content,
+        c.time                   = $time,
+        c.source                 = $source,
+        c.user_context_username  = $user_context_username,
+        c.embedding              = $embedding
+    WITH c
+    MATCH (p:Post {id: $post_id})
+    MERGE (p)-[:HAS_COMMENT]->(c)
+    WITH c, p
+    MERGE (u:User {username: $commenter_name})
+    MERGE (u)-[:COMMENTED]->(c)
+    WITH c
+    MERGE (ctx:User {username: $user_context_username})
+    MERGE (ctx)-[:CAN_SEE]->(c)
 """
 
 _VECTOR_SEARCH = """
@@ -85,6 +180,39 @@ _VECTOR_SEARCH_FILTERED = """
 
 _COUNT_POSTS = "MATCH (p:Post) RETURN count(p) AS n"
 
+_COUNT_POSTS_BY_USER = """
+    MATCH (p:Post)
+    WHERE p.user_context_username = $username
+    RETURN count(p) AS n
+"""
+
+_MESSAGE_VECTOR_SEARCH = """
+    CALL db.index.vector.queryNodes($index, $top_k, $embedding)
+    YIELD node AS m, score
+    WHERE m.user_context_username = $username
+    RETURN m.id                  AS id,
+           m.text                AS text,
+           m.sender_name         AS sender_name,
+           m.receiver_name       AS receiver_name,
+           m.date                AS date,
+           m.time_ms             AS time_ms,
+           m.source              AS source,
+           score
+"""
+
+_COMMENT_VECTOR_SEARCH = """
+    CALL db.index.vector.queryNodes($index, $top_k, $embedding)
+    YIELD node AS c, score
+    WHERE c.user_context_username = $username
+    RETURN c.id                 AS id,
+           c.post_id            AS post_id,
+           c.content            AS content,
+           c.commenter_name     AS commenter_name,
+           c.time               AS time,
+           c.source             AS source,
+           score
+"""
+
 
 class VectorStore:
     """
@@ -114,17 +242,29 @@ class VectorStore:
         )
         self._db = settings.neo4j_database
         self._index = settings.neo4j_vector_index
+        self._message_index = settings.neo4j_message_vector_index
+        self._comment_index = settings.neo4j_comment_vector_index
         self._ensure_index()
 
     # ------------------------------------------------------------------
     def _ensure_index(self) -> None:
-        """Create the vector index if it doesn't exist yet."""
+        """Create post/message/comment vector indexes if they don't exist yet."""
         cypher = _CREATE_VECTOR_INDEX.format(
             index=self._index,
             dim=settings.neo4j_embedding_dim,
         )
+        message_cypher = _CREATE_MESSAGE_VECTOR_INDEX.format(
+            index=self._message_index,
+            dim=settings.neo4j_embedding_dim,
+        )
+        comment_cypher = _CREATE_COMMENT_VECTOR_INDEX.format(
+            index=self._comment_index,
+            dim=settings.neo4j_embedding_dim,
+        )
         with self._driver.session(database=self._db) as session:
             session.run(cypher)
+            session.run(message_cypher)
+            session.run(comment_cypher)
         logger.info("Neo4j vector index '%s' ready.", self._index)
 
     # ------------------------------------------------------------------
@@ -151,18 +291,29 @@ class VectorStore:
             key_map = {
                 "account_id": "account_id",
                 "account_username": "account_username",
+                "username": "account_username",
                 "account_acct": "account_acct",
                 "visibility": "visibility",
                 "language": "language",
+                "user_context_username": "user_context_username",
             }
             for key, val in where.items():
-                neo4j_key = key_map.get(key, key)
+                # Only allow whitelisted keys to prevent invalid property access
+                if key not in key_map:
+                    continue
+                neo4j_key = key_map[key]
                 param_key = f"filter_{neo4j_key}"
                 clauses.append(f"p.{neo4j_key} = ${param_key}")
                 params[param_key] = val
-            cypher = _VECTOR_SEARCH_FILTERED.format(
-                where_clause=" AND ".join(clauses)
-            )
+
+            # If all provided keys are unsupported, avoid generating
+            # an empty WHERE clause (which causes a Cypher syntax error).
+            if clauses:
+                cypher = _VECTOR_SEARCH_FILTERED.format(
+                    where_clause=" AND ".join(clauses)
+                )
+            else:
+                cypher = _VECTOR_SEARCH
         else:
             cypher = _VECTOR_SEARCH
 
@@ -187,11 +338,77 @@ class VectorStore:
                         "replies_count": r["replies_count"],
                         "visibility": r["visibility"],
                         "language": r["language"],
+                        "user_context_username": r.get("user_context_username", ""),
                     },
                     "score": score,
                 }
             )
         return results
+
+    # ------------------------------------------------------------------
+    def similarity_search_messages(
+        self,
+        query_embedding: list[float],
+        username: str,
+        top_k: int = settings.default_top_k,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {
+            "index": self._message_index,
+            "top_k": top_k,
+            "embedding": query_embedding,
+            "username": username,
+        }
+        with self._driver.session(database=self._db) as session:
+            records = session.run(_MESSAGE_VECTOR_SEARCH, **params).data()
+
+        return [
+            {
+                "id": str(r["id"]),
+                "document": r.get("text", ""),
+                "metadata": {
+                    "sender_name": r.get("sender_name", ""),
+                    "receiver_name": r.get("receiver_name", ""),
+                    "date": r.get("date", ""),
+                    "time_ms": int(r.get("time_ms") or 0),
+                    "source": r.get("source", ""),
+                    "type": "message",
+                },
+                "score": float(r["score"]),
+            }
+            for r in records
+        ]
+
+    # ------------------------------------------------------------------
+    def similarity_search_comments(
+        self,
+        query_embedding: list[float],
+        username: str,
+        top_k: int = settings.default_top_k,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {
+            "index": self._comment_index,
+            "top_k": top_k,
+            "embedding": query_embedding,
+            "username": username,
+        }
+        with self._driver.session(database=self._db) as session:
+            records = session.run(_COMMENT_VECTOR_SEARCH, **params).data()
+
+        return [
+            {
+                "id": str(r["id"]),
+                "document": r.get("content", ""),
+                "metadata": {
+                    "post_id": str(r.get("post_id", "")),
+                    "commenter_name": r.get("commenter_name", ""),
+                    "time": r.get("time", ""),
+                    "source": r.get("source", ""),
+                    "type": "comment",
+                },
+                "score": float(r["score"]),
+            }
+            for r in records
+        ]
 
     # ------------------------------------------------------------------
     def upsert(
@@ -249,6 +466,77 @@ class VectorStore:
             return session.run(cypher, id=str(post_id)).data()
 
     # ------------------------------------------------------------------
+    def batch_upsert_user_data(
+        self,
+        posts: list[dict[str, Any]],
+        messages: list[dict[str, Any]],
+        comments: list[dict[str, Any]],
+        username: str,
+    ) -> None:
+        """
+        Batch upsert user-scoped posts/messages/comments.
+        Each input record must already contain an `embedding` field.
+        """
+        with self._driver.session(database=self._db) as session:
+            for post in posts:
+                tags = post.get("tags", [])
+                if isinstance(tags, str):
+                    tags = json.loads(tags)
+                session.run(
+                    _UPSERT_USER_POST,
+                    id=str(post.get("id", "")),
+                    content=post.get("content", ""),
+                    created_at=post.get("created_at", ""),
+                    account_id=str(post.get("account_id", "")),
+                    account_username=post.get("account_username", ""),
+                    account_acct=post.get("account_acct", ""),
+                    tags_json=json.dumps(tags),
+                    tags=tags,
+                    reblogs_count=int(post.get("reblogs_count", 0)),
+                    favourites_count=int(post.get("favourites_count", 0)),
+                    replies_count=int(post.get("replies_count", 0)),
+                    url=post.get("url", ""),
+                    visibility=post.get("visibility", "public"),
+                    language=post.get("language", ""),
+                    source=post.get("source", ""),
+                    title=post.get("title", ""),
+                    user_context_username=username,
+                    embedding=post["embedding"],
+                )
+
+            for message in messages:
+                session.run(
+                    _UPSERT_MESSAGE,
+                    id=str(message.get("id", "")),
+                    sender_name=message.get("sender_name", ""),
+                    receiver_name=message.get("receiver_name", ""),
+                    text=message.get("text", ""),
+                    date=message.get("date", ""),
+                    time_ms=int(message.get("time_ms", 0)),
+                    source=message.get("source", "individual_chat"),
+                    user_context_username=username,
+                    embedding=message["embedding"],
+                )
+
+            for comment in comments:
+                session.run(
+                    _UPSERT_COMMENT,
+                    id=str(comment.get("id", "")),
+                    post_id=str(comment.get("post_id", "")),
+                    commenter_name=comment.get("commenter_name", ""),
+                    content=comment.get("content", ""),
+                    time=comment.get("time", ""),
+                    source=comment.get("source", ""),
+                    user_context_username=username,
+                    embedding=comment["embedding"],
+                )
+
+        logger.info(
+            "Upserted %d posts, %d messages, %d comments for user '%s'.",
+            len(posts), len(messages), len(comments), username,
+        )
+
+    # ------------------------------------------------------------------
     def close(self) -> None:
         self._driver.close()
 
@@ -256,4 +544,10 @@ class VectorStore:
     def count(self) -> int:
         with self._driver.session(database=self._db) as session:
             result = session.run(_COUNT_POSTS).single()
+            return result["n"] if result else 0
+
+    def count_for_user(self, username: str) -> int:
+        with self._driver.session(database=self._db) as session:
+            result = session.run(_COUNT_POSTS_BY_USER,
+                                 username=username).single()
             return result["n"] if result else 0

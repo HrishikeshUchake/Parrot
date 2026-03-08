@@ -24,7 +24,8 @@ async def query_analyzer_node(state: AgentState) -> dict:
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
         analysis = json.loads(raw)
     except Exception as exc:
-        logger.warning("QueryAnalyzer LLM call failed: %s – using defaults", exc)
+        logger.warning(
+            "QueryAnalyzer LLM call failed: %s using defaults", exc)
         analysis = {
             "intent": "open_ended",
             "entities": [],

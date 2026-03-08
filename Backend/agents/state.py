@@ -1,6 +1,6 @@
 """LangGraph shared state definition."""
 from __future__ import annotations
-from typing import TypedDict, Annotated
+from typing import TypedDict, Annotated, NotRequired
 import operator
 
 from ..database.models import SearchResult
@@ -9,6 +9,7 @@ from ..database.models import SearchResult
 class AgentState(TypedDict):
     # ── Input
     query: str
+    user_context_username: NotRequired[str]
 
     # ── After QueryAnalyzer
     intent: str

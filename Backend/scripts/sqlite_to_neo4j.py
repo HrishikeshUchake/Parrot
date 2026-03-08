@@ -4,12 +4,12 @@ sqlite_to_neo4j.py
 Ingestion pipeline: SQLite Mastodon posts → Neo4j graph + vector index.
 
 Run from the repo root:
-    python -m Backend.sqlite_to_neo4j
+    python -m Backend.scripts.sqlite_to_neo4j
 
 Pre-requisites:
   1. Neo4j 5.11+ running locally (or Aura).  Default bolt://localhost:7687
   2. Mastodon statuses already fetched into SQLite via:
-         python -m Backend.fetch_mastodon
+         python -m Backend.scripts.fetch_mastodon
   3. A .env file (or environment variables) with NEO4J_PASSWORD if changed.
 
 What it creates in Neo4j
@@ -24,6 +24,7 @@ What it creates in Neo4j
   VECTOR INDEX post_embeddings  ON Post(embedding)  cosine / 384 dims
 """
 from __future__ import annotations
+from Backend.config import settings
 import json
 import sqlite3
 import sys
@@ -32,9 +33,8 @@ from pathlib import Path
 from sentence_transformers import SentenceTransformer
 from neo4j import GraphDatabase
 
-# Allow running as  python -m Backend.sqlite_to_neo4j  OR  python Backend/sqlite_to_neo4j.py
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from Backend.config import settings
+# Allow running as  python -m Backend.scripts.sqlite_to_neo4j  OR  python Backend/scripts/sqlite_to_neo4j.py
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 
 # ── 1. Load posts from SQLite ─────────────────────────────────────────────────
@@ -195,4 +195,3 @@ if __name__ == "__main__":
         print(f"Loaded {len(posts)} statuses from SQLite.")
         posts = embed(posts)
         upsert_to_neo4j(posts)
-

@@ -1,54 +1,47 @@
 """
 fetch_mastodon.py
 =================
-Ingestion step 1 – fetch statuses from a Mastodon instance and persist them
-into a local SQLite database for downstream pipelines.
+Ingestion – fetch statuses from a Mastodon instance, embed them, and persist
+them directly into Neo4j (no SQLite intermediate step).
 
 Usage
 -----
     # From the repo root:
-    python -m Backend.fetch_mastodon
+    python -m Backend.scripts.fetch_mastodon
 
     # Override instance and target count at runtime:
     MASTODON_INSTANCE_URL=https://fosstodon.org \\
     MASTODON_FETCH_LIMIT=500 \\
-    python -m Backend.fetch_mastodon
+    python -m Backend.scripts.fetch_mastodon
 
-Configuration
--------------
-All settings are read from environment variables (or .env).  See config.py:
-  MASTODON_INSTANCE_URL   – e.g. https://mastodon.social        (default)
-  MASTODON_ACCESS_TOKEN   – personal access token (optional; needed for
+Configuration (config.py / .env)
+---------------------------------
+  MASTODON_INSTANCE_URL    e.g. https://mastodon.social  (default)
+  MASTODON_ACCESS_TOKEN    personal access token (optional; needed for
                              authenticated timelines / higher rate limits)
-  MASTODON_FETCH_LIMIT    – total number of statuses to ingest  (default 200)
-  MASTODON_PAGE_SIZE      – results per API page, max 40        (default 40)
-  MASTODON_LOCAL_ONLY     – set "true" to restrict to the local instance
+  MASTODON_FETCH_LIMIT     total number of statuses to ingest (default 200)
+  MASTODON_PAGE_SIZE       results per API page, max 40      (default 40)
+  MASTODON_LOCAL_ONLY      set "true" to restrict to the local instance
 
-What gets stored
-----------------
-SQLite table  ``posts``  (schema created here; shared with the rest of the
-pipeline):
-  id TEXT PRIMARY KEY
-  content TEXT              – HTML-stripped status text
-  created_at TEXT           – ISO-8601 timestamp ("2024-03-15T12:34:56.000Z")
-  account_id TEXT           – author's Mastodon account ID
-  account_username TEXT     – e.g. "alice"
-  account_display_name TEXT – e.g. "Alice Smith"
-  account_acct TEXT         – e.g. "alice@mastodon.social"
-  tags TEXT                 – JSON array of hashtag names  ["python","oss",…]
-  reblogs_count INTEGER
-  favourites_count INTEGER
-  replies_count INTEGER
-  url TEXT                  – canonical URL of the status
-  visibility TEXT           – "public" / "unlisted" / "private" / "direct"
-  language TEXT             – BCP-47 language tag or empty string
+What gets stored in Neo4j
+--------------------------
+  (:Post {id, content, created_at, account_id, account_username,
+          account_display_name, account_acct, tags_json,
+          reblogs_count, favourites_count, replies_count,
+          url, visibility, language, embedding})
+  (:Tag     {name})
+  (:Account {id, username, display_name, acct})
+  (:Post)-[:HAS_TAG]->(:Tag)
+  (:Account)-[:AUTHORED]->(:Post)
+  VECTOR INDEX post_embeddings ON Post(embedding)  cosine / 384 dims
 """
 from __future__ import annotations
+from Backend.config import settings
 
 import html
 import json
+import logging
 import re
-import sqlite3
 import sys
 import time
 from datetime import datetime, timezone
@@ -57,8 +50,13 @@ from typing import Any
 
 import requests
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from Backend.config import settings
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s | %(name)s | %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -83,62 +81,13 @@ def _parse_datetime(value: Any) -> str:
     return str(value) if value else ""
 
 
-# ── SQLite schema ─────────────────────────────────────────────────────────────
-
-_CREATE_TABLE = """
-CREATE TABLE IF NOT EXISTS posts (
-    id                   TEXT PRIMARY KEY,
-    content              TEXT,
-    created_at           TEXT,
-    account_id           TEXT,
-    account_username     TEXT,
-    account_display_name TEXT,
-    account_acct         TEXT,
-    tags                 TEXT,
-    reblogs_count        INTEGER DEFAULT 0,
-    favourites_count     INTEGER DEFAULT 0,
-    replies_count        INTEGER DEFAULT 0,
-    url                  TEXT,
-    visibility           TEXT DEFAULT 'public',
-    language             TEXT
-)
-"""
-
-_UPSERT_POST = """
-INSERT OR REPLACE INTO posts
-    (id, content, created_at, account_id, account_username,
-     account_display_name, account_acct, tags,
-     reblogs_count, favourites_count, replies_count,
-     url, visibility, language)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-"""
-
-
-def _init_db(db_path: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path)
-    # If the table exists with the old mock-data schema (has 'title' / no 'content'),
-    # drop it so CREATE TABLE below recreates it with the Mastodon schema.
-    row = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='posts'"
-    ).fetchone()
-    if row:
-        col_names = {
-            r[1] for r in conn.execute("PRAGMA table_info(posts)")
-        }
-        if "content" not in col_names:
-            print("Old mock-data schema detected – dropping posts table and recreating …")
-            conn.execute("DROP TABLE posts")
-    conn.execute(_CREATE_TABLE)
-    conn.commit()
-    return conn
-
-
 # ── Mastodon API client (thin wrapper over requests) ─────────────────────────
 
 class MastodonClient:
     """Minimal public/authenticated Mastodon REST client."""
 
-    _HEADERS = {"User-Agent": "Parrot-RAG/1.0 (+https://github.com/your-org/parrot)"}
+    _HEADERS = {
+        "User-Agent": "Parrot-RAG/1.0 (+https://github.com/your-org/parrot)"}
 
     def __init__(
         self,
@@ -211,22 +160,21 @@ class MastodonClient:
 
 def _normalise(status: dict) -> dict | None:
     """
-    Convert a raw Mastodon status dict into the flat dict we store in SQLite.
-    Returns None for boosts (reblogs) without original content so they are
-    not double-counted (the original will appear in its own pagination window).
+    Convert a raw Mastodon status dict into a flat dict ready for Neo4j.
+    Returns None for pure boosts so they are not double-counted.
     """
     # Skip pure boosts – the reblogged post will surface on its own
     if status.get("reblog") and not (status.get("content") or "").strip():
         return None
 
-    # If this is a boost *with* quote-style content, use the outer status
     content_raw = status.get("content") or ""
     content = _strip_html(content_raw)
     if not content:
         return None
 
     acct: dict = status.get("account") or {}
-    tags: list[str] = [t["name"] for t in (status.get("tags") or []) if t.get("name")]
+    tags: list[str] = [t["name"]
+                       for t in (status.get("tags") or []) if t.get("name")]
 
     return {
         "id": str(status["id"]),
@@ -236,7 +184,8 @@ def _normalise(status: dict) -> dict | None:
         "account_username": acct.get("username", ""),
         "account_display_name": acct.get("display_name", "") or acct.get("username", ""),
         "account_acct": acct.get("acct", ""),
-        "tags": json.dumps(tags),
+        # list[str] – Neo4j stores natively; tags_json added at upsert time
+        "tags": tags,
         "reblogs_count": int(status.get("reblogs_count") or 0),
         "favourites_count": int(status.get("favourites_count") or 0),
         "replies_count": int(status.get("replies_count") or 0),
@@ -249,27 +198,64 @@ def _normalise(status: dict) -> dict | None:
 # ── Main ingestion loop ───────────────────────────────────────────────────────
 
 def fetch_and_store(
-    db_path: str = settings.db_path,
     instance_url: str = settings.mastodon_instance_url,
     access_token: str = settings.mastodon_access_token,
     total: int = settings.mastodon_fetch_limit,
     page_size: int = settings.mastodon_page_size,
     local_only: bool = settings.mastodon_local_only,
+    embed_batch_size: int = settings.embedding_batch_size,
 ) -> int:
     """
-    Fetch up to *total* statuses from *instance_url* and upsert into SQLite.
-    Returns the number of rows inserted/replaced.
+    Fetch up to *total* statuses from *instance_url*, embed them, and upsert
+    directly into Neo4j.  Returns the number of posts inserted/updated.
     """
+    # Lazy import to avoid loading Neo4j/sentence-transformers at module level
+    from Backend.services.embedding_service import EmbeddingService
+    from Backend.services.vector_store import VectorStore
+
+    emb_svc = EmbeddingService()
+    store = VectorStore()
     client = MastodonClient(instance_url, access_token)
-    conn = _init_db(db_path)
 
     fetched = 0
     inserted = 0
     max_id: str | None = None
+    pending: list[dict] = []          # accumulated normalised records
     # timeline_mode: "home" (auth) | "public" | "trending" (fallback)
     timeline_mode = "home" if bool(access_token) else "public"
 
     print(f"Fetching up to {total} statuses from {instance_url} …")
+
+    def _flush(batch: list[dict]) -> int:
+        """Embed a batch of records and upsert into Neo4j. Returns count upserted."""
+        if not batch:
+            return 0
+        texts = [r["content"] for r in batch]
+        embeddings = emb_svc.encode_batch(texts)
+        ids = [r["id"] for r in batch]
+        documents = texts
+        metadatas = [
+            {
+                "content": r["content"],
+                "created_at": r["created_at"],
+                "account_id": r["account_id"],
+                "account_username": r["account_username"],
+                "account_display_name": r["account_display_name"],
+                "account_acct": r["account_acct"],
+                "tags": r["tags"],               # list[str]
+                "tags_json": json.dumps(r["tags"]),
+                "reblogs_count": r["reblogs_count"],
+                "favourites_count": r["favourites_count"],
+                "replies_count": r["replies_count"],
+                "url": r["url"],
+                "visibility": r["visibility"],
+                "language": r["language"],
+            }
+            for r in batch
+        ]
+        store.upsert(ids=ids, documents=documents,
+                     metadatas=metadatas, embeddings=embeddings)
+        return len(batch)
 
     while fetched < total:
         remaining = total - fetched
@@ -293,22 +279,20 @@ def fetch_and_store(
         except requests.HTTPError as exc:
             status_code = exc.response.status_code if exc.response is not None else 0
             if status_code == 422 and timeline_mode == "public":
-                # mastodon.social and some other instances disable the public
-                # timeline for unauthenticated requests (returns 422).
-                # Fall back to the trending-statuses endpoint which is always
-                # public and requires no token.
                 print(
                     "\n  Public timeline unavailable without auth (422) – "
                     "falling back to /api/v1/trends/statuses …"
                 )
                 timeline_mode = "trending"
-                fetched = 0          # reset offset counter used by trending
+                fetched = 0
                 max_id = None
                 continue
-            print(f"  HTTP error: {exc} – stopping pagination.", file=sys.stderr)
+            print(
+                f"  HTTP error: {exc} – stopping pagination.", file=sys.stderr)
             break
         except requests.RequestException as exc:
-            print(f"  Network error: {exc} – stopping pagination.", file=sys.stderr)
+            print(
+                f"  Network error: {exc} – stopping pagination.", file=sys.stderr)
             break
 
         if not page:
@@ -319,37 +303,25 @@ def fetch_and_store(
             record = _normalise(raw)
             if record is None:
                 continue
-            conn.execute(
-                _UPSERT_POST,
-                (
-                    record["id"],
-                    record["content"],
-                    record["created_at"],
-                    record["account_id"],
-                    record["account_username"],
-                    record["account_display_name"],
-                    record["account_acct"],
-                    record["tags"],
-                    record["reblogs_count"],
-                    record["favourites_count"],
-                    record["replies_count"],
-                    record["url"],
-                    record["visibility"],
-                    record["language"],
-                ),
-            )
-            inserted += 1
+            pending.append(record)
 
-        conn.commit()
+            # Flush whenever we have a full embed batch
+            if len(pending) >= embed_batch_size:
+                inserted += _flush(pending)
+                pending = []
+
         fetched += len(page)
         if timeline_mode != "trending":
-            max_id = str(page[-1]["id"])  # max_id paginates backwards
+            max_id = str(page[-1]["id"])
 
-        print(f"  Fetched {fetched}/{total}  |  stored {inserted} statuses …", end="\r")
+        print(
+            f"  Fetched {fetched}/{total}  |  stored {inserted} statuses …", end="\r")
         time.sleep(0.5)   # be polite to the instance
 
-    conn.close()
-    print(f"\nDone. {inserted} Mastodon statuses upserted into {db_path}")
+    # Flush any remaining records
+    inserted += _flush(pending)
+
+    print(f"\nDone. {inserted} Mastodon statuses upserted into Neo4j.")
     return inserted
 
 
