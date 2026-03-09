@@ -108,6 +108,7 @@ async def simple_retrieval_node(state: AgentState) -> dict:
 
     # Detect what content types the user is asking for
     content_types = _detect_content_types(state["query"])
+    date_filter = state.get("date_filter")
 
     results: list[SearchResult] = []
 
@@ -123,6 +124,7 @@ async def simple_retrieval_node(state: AgentState) -> dict:
                 query=state["query"],
                 top_k=settings.default_top_k,
                 metadata_filter=metadata_filter,
+                date_range=date_filter,
             )
         )
 
@@ -188,6 +190,7 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
     # Step 1 – hybrid multi-query retrieval
     results: list[SearchResult] = []
     per_query_k = max(settings.advanced_top_k // max(1, len(queries)), 3)
+    date_filter = state.get("date_filter")
 
     if content_types["posts"]:
         for q in queries:
@@ -200,6 +203,7 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
                     query=q,
                     top_k=per_query_k,
                     metadata_filter=metadata_filter,
+                    date_range=date_filter,
                 )
             )
 

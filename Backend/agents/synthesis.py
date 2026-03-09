@@ -4,11 +4,11 @@ import logging
 
 from .state import AgentState
 from ..database.models import SearchResult
-from ..llm.ollama_client import OllamaClient
+from ..llm.llm_provider import get_llm_provider
 from ..llm.prompts import SYNTHESIS_PROMPT
 
 logger = logging.getLogger(__name__)
-_client = OllamaClient()
+_client = get_llm_provider()
 
 
 def _post_label(p) -> str:

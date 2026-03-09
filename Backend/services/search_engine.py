@@ -28,10 +28,12 @@ class VectorSearchStrategy:
         query: str,
         top_k: int = settings.default_top_k,
         where: dict | None = None,
+        date_range: tuple[str, str] | None = None,
     ) -> list[SearchResult]:
         emb = self._svc.encode(query)
         hits = self._store.similarity_search(
-            emb, top_k=top_k, where=where or None)
+            emb, top_k=top_k, where=where or None, date_range=date_range
+        )
         results = []
         
         # When filtering by metadata (e.g., specific author), use a lower threshold
@@ -123,9 +125,11 @@ class HybridSearchEngine:
         query: str,
         top_k: int = settings.default_top_k,
         metadata_filter: dict | None = None,
+        date_range: tuple[str, str] | None = None,
     ) -> list[SearchResult]:
         vec_results = self._vector.search(
-            query, top_k=top_k, where=metadata_filter)
+            query, top_k=top_k, where=metadata_filter, date_range=date_range
+        )
         kw_results = self._keyword.search(query, top_k=top_k)
 
         seen: set[str] = set()
@@ -140,13 +144,19 @@ class HybridSearchEngine:
             if r.post.id not in seen:
                 seen.add(r.post.id)
                 r.source = "keyword"
+                # For keyword results, date_range filtering would either be done in DB logic or post-filtered here.
+                # For now, simplistic approach is to let vector search handle the date precision.
                 merged.append(r)
 
         merged.sort(key=lambda x: x.score, reverse=True)
         return merged[:top_k]
 
     def advanced_search(
-        self, queries: list[str], top_k: int = settings.advanced_top_k
+        self, 
+        queries: list[str], 
+        top_k: int = settings.advanced_top_k,
+        date_range: tuple[str, str] | None = None,
+        metadata_filter: dict | None = None,
     ) -> list[SearchResult]:
         """Multi-query retrieval: run multiple query reformulations, merge."""
         seen: set[str] = set()
@@ -154,7 +164,7 @@ class HybridSearchEngine:
         per_query_k = max(top_k // len(queries), 3)
 
         for q in queries:
-            for r in self.search(q, top_k=per_query_k):
+            for r in self.search(q, top_k=per_query_k, date_range=date_range, metadata_filter=metadata_filter):
                 if r.post.id not in seen:
                     seen.add(r.post.id)
                     all_results.append(r)

@@ -273,6 +273,7 @@ class VectorStore:
         query_embedding: list[float],
         top_k: int = settings.default_top_k,
         where: dict[str, Any] | None = None,
+        date_range: tuple[str, str] | None = None,
     ) -> list[dict[str, Any]]:
         """
         Returns a list of dicts with keys:
@@ -285,8 +286,8 @@ class VectorStore:
             "embedding": query_embedding,
         }
 
+        clauses = []
         if where:
-            clauses = []
             # Map external filter keys to Neo4j property names
             key_map = {
                 "account_id": "account_id",
@@ -306,14 +307,16 @@ class VectorStore:
                 clauses.append(f"p.{neo4j_key} = ${param_key}")
                 params[param_key] = val
 
-            # If all provided keys are unsupported, avoid generating
-            # an empty WHERE clause (which causes a Cypher syntax error).
-            if clauses:
-                cypher = _VECTOR_SEARCH_FILTERED.format(
-                    where_clause=" AND ".join(clauses)
-                )
-            else:
-                cypher = _VECTOR_SEARCH
+        if date_range:
+            start_date, end_date = date_range
+            clauses.append("p.created_at >= $start_date AND p.created_at <= $end_date")
+            params["start_date"] = start_date
+            params["end_date"] = end_date
+
+        if clauses:
+            cypher = _VECTOR_SEARCH_FILTERED.format(
+                where_clause=" AND ".join(clauses)
+            )
         else:
             cypher = _VECTOR_SEARCH
 

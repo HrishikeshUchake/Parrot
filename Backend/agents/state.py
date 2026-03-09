@@ -15,6 +15,8 @@ class AgentState(TypedDict):
     intent: str
     entities: list[str]
     filters: dict
+    date_filter: NotRequired[tuple[str, str] | None]
+    tag_filter: NotRequired[list[str] | None]
     sub_queries: list[str]
     complexity: str
 
