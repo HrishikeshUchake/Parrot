@@ -116,14 +116,15 @@ def _check_vector_indexes(session) -> None:
     """Check Neo4j version and warn if vector index dimensions might conflict."""
     try:
         # Get Neo4j version
-        result = session.run("CALL dbms.components() YIELD versions RETURN versions[0] AS version")
+        result = session.run(
+            "CALL dbms.components() YIELD versions RETURN versions[0] AS version")
         version_str = result.single()["version"]
         logger.info(f"Neo4j version detected: {version_str}")
-        
+
         # Parse version (e.g. '5.12.0' -> (5, 12, 0))
         parts = version_str.split('-')[0].split('.')
         major, minor = int(parts[0]), int(parts[1]) if len(parts) > 1 else 0
-        
+
         if (major, minor) < (5, 15):
             logger.warning(
                 "WARNING: Neo4j version is < 5.15. You likely need to MANUALLY DROP "
@@ -131,9 +132,11 @@ def _check_vector_indexes(session) -> None:
                 "as older versions do not cleanly allow altering index dimension."
             )
         else:
-            logger.info("Neo4j version >= 5.15. Vector indexes may need to be dropped and recreated manually if dimensions changed.")
+            logger.info(
+                "Neo4j version >= 5.15. Vector indexes may need to be dropped and recreated manually if dimensions changed.")
     except Exception as e:
         logger.warning(f"Could not verify Neo4j version or indexes: {e}")
+
 
 def migrate_embeddings(batch_size: int = 128, dry_run: bool = False) -> MigrationStats:
     stats = MigrationStats()
@@ -195,9 +198,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
+    logging.basicConfig(level=logging.INFO,
+                        format="%(levelname)s | %(message)s")
     args = _build_parser().parse_args()
-    stats = migrate_embeddings(batch_size=max(1, args.batch_size), dry_run=args.dry_run)
+    stats = migrate_embeddings(batch_size=max(
+        1, args.batch_size), dry_run=args.dry_run)
     mode = "DRY RUN" if args.dry_run else "UPDATED"
     print(
         f"{mode}: posts={stats.posts}, messages={stats.messages}, comments={stats.comments}"

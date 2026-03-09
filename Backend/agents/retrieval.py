@@ -39,34 +39,6 @@ def _extract_user_context(state: AgentState) -> str:
     return m.group(1) if m else ""
 
 
-def _detect_content_types(query: str) -> dict[str, bool]:
-    """
-    Detect what content types the user is asking about.
-    Returns dict with keys: posts, messages, comments
-    """
-    query_lower = query.lower()
-    
-    # Check for explicit mentions of each type (include common synonyms)
-    has_posts = any(tok in query_lower for tok in ("post", "status", "toot"))
-    has_messages = any(tok in query_lower for tok in (
-        "message", "messages", "dm", "dms", "chat", "inbox"
-    ))
-    has_comments = any(tok in query_lower for tok in (
-        "comment", "comments", "reply", "replies", "thread"
-    ))
-    
-    # If none are explicitly mentioned, default to posts only
-    # (to maintain backward compatibility and avoid mixing content types)
-    if not (has_posts or has_messages or has_comments):
-        has_posts = True
-    
-    return {
-        "posts": has_posts,
-        "messages": has_messages,
-        "comments": has_comments,
-    }
-
-
 def _to_message_result(hit: dict) -> SearchResult:
     return SearchResult(
         post=None,
@@ -106,61 +78,32 @@ async def simple_retrieval_node(state: AgentState) -> dict:
             "answer": f"There are {count} posts in the database{scope}.",
         }
 
-    # Detect what content types the user is asking for
-    content_types = _detect_content_types(state["query"])
-    date_filter = state.get("date_filter")
+    metadata_filter = state.get("filters") or None
+    if user_context:
+        metadata_filter = dict(metadata_filter or {})
+        metadata_filter["user_context_username"] = user_context
 
-    results: list[SearchResult] = []
+    results = _engine.search(
+        query=state["query"],
+        top_k=settings.default_top_k,
+        metadata_filter=metadata_filter,
+    )
 
-    if content_types["posts"]:
-        metadata_filter = state.get("filters") or None
-        if user_context:
-            # When asking for posts "by" a user, filter by author (account_username)
-            metadata_filter = dict(metadata_filter or {})
-            metadata_filter["account_username"] = user_context
-
-        results.extend(
-            _engine.search(
-                query=state["query"],
-                top_k=settings.default_top_k,
-                metadata_filter=metadata_filter,
-                date_range=date_filter,
-            )
-        )
-
-    # Add user-scoped message/comment semantic hits only if explicitly requested
+    # Add user-scoped message/comment semantic hits if user context is available.
     if user_context:
         query_embedding = _embedder.encode(state["query"])
-        
-        # Use larger k when query only asks for messages/comments and excludes posts.
-        semantic_k = settings.default_top_k if not content_types["posts"] else max(
-            3, settings.default_top_k // 2
+        message_hits = _store.similarity_search_messages(
+            query_embedding=query_embedding,
+            username=user_context,
+            top_k=max(3, settings.default_top_k // 2),
         )
-
-        if content_types["messages"]:
-            message_hits = _store.similarity_search_messages(
-                query_embedding=query_embedding,
-                username=user_context,
-                top_k=semantic_k,
-            )
-            results.extend(_to_message_result(h) for h in message_hits)
-        
-        if content_types["comments"]:
-            comment_hits = _store.similarity_search_comments(
-                query_embedding=query_embedding,
-                username=user_context,
-                top_k=semantic_k,
-            )
-            results.extend(_to_comment_result(h) for h in comment_hits)
-
-    # If the query explicitly asks only for messages/comments, avoid polluting
-    # the final context with posts.
-    if not content_types["posts"]:
-        results = [
-            r for r in results
-            if (content_types["messages"] and r.result_type == "message")
-            or (content_types["comments"] and r.result_type == "comment")
-        ]
+        comment_hits = _store.similarity_search_comments(
+            query_embedding=query_embedding,
+            username=user_context,
+            top_k=max(3, settings.default_top_k // 2),
+        )
+        results.extend(_to_message_result(h) for h in message_hits)
+        results.extend(_to_comment_result(h) for h in comment_hits)
 
     results.sort(key=lambda x: x.score, reverse=True)
     results = results[: settings.default_top_k]
@@ -184,58 +127,37 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
         queries = [state["query"]] + queries
     user_context = _extract_user_context(state)
 
-    # Detect what content types the user is asking for
-    content_types = _detect_content_types(state["query"])
-
     # Step 1 – hybrid multi-query retrieval
     results: list[SearchResult] = []
     per_query_k = max(settings.advanced_top_k // max(1, len(queries)), 3)
-    date_filter = state.get("date_filter")
 
-    if content_types["posts"]:
-        for q in queries:
-            # When asking for posts "by" a user, filter by author (account_username)
-            metadata_filter = None
-            if user_context:
-                metadata_filter = {"account_username": user_context}
-            results.extend(
-                _engine.search(
-                    query=q,
-                    top_k=per_query_k,
-                    metadata_filter=metadata_filter,
-                    date_range=date_filter,
-                )
+    for q in queries:
+        metadata_filter = {
+            "user_context_username": user_context} if user_context else None
+        results.extend(
+            _engine.search(
+                query=q,
+                top_k=per_query_k,
+                metadata_filter=metadata_filter,
             )
+        )
 
     if user_context:
-        # Add semantic matches from user comments/messages only if explicitly requested
+        # Add semantic matches from user comments/messages for each sub-query.
         for q in queries:
             emb = _embedder.encode(q)
-            
-            semantic_k = 6 if content_types["posts"] else settings.default_top_k
-
-            if content_types["messages"]:
-                for h in _store.similarity_search_messages(
-                    query_embedding=emb,
-                    username=user_context,
-                    top_k=semantic_k,
-                ):
-                    results.append(_to_message_result(h))
-            
-            if content_types["comments"]:
-                for h in _store.similarity_search_comments(
-                    query_embedding=emb,
-                    username=user_context,
-                    top_k=semantic_k,
-                ):
-                    results.append(_to_comment_result(h))
-
-    if not content_types["posts"]:
-        results = [
-            r for r in results
-            if (content_types["messages"] and r.result_type == "message")
-            or (content_types["comments"] and r.result_type == "comment")
-        ]
+            for h in _store.similarity_search_messages(
+                query_embedding=emb,
+                username=user_context,
+                top_k=3,
+            ):
+                results.append(_to_message_result(h))
+            for h in _store.similarity_search_comments(
+                query_embedding=emb,
+                username=user_context,
+                top_k=3,
+            ):
+                results.append(_to_comment_result(h))
 
     # Deduplicate by (type, id), keeping best score.
     dedup: dict[tuple[str, str], SearchResult] = {}
@@ -249,41 +171,40 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
         results), len(queries))
 
     # Step 2 – graph-neighbor enrichment via Neo4j traversal
-    if content_types["posts"]:
-        seen_ids = {r.post.id for r in results if r.post is not None}
-        neighbor_post_ids: list[str] = []
+    seen_ids = {r.post.id for r in results if r.post is not None}
+    neighbor_post_ids: list[str] = []
 
-        for r in results[: settings.default_top_k]:          # expand from top-k seeds
-            if r.post is None:
-                continue
-            neighbors = _store.graph_neighbors(r.post.id, hops=1)
-            for n in neighbors:
-                nid = str(n["id"])
-                if nid not in seen_ids:
-                    seen_ids.add(nid)
-                    neighbor_post_ids.append(nid)
+    for r in results[: settings.default_top_k]:          # expand from top-k seeds
+        if r.post is None:
+            continue
+        neighbors = _store.graph_neighbors(r.post.id, hops=1)
+        for n in neighbors:
+            nid = str(n["id"])
+            if nid not in seen_ids:
+                seen_ids.add(nid)
+                neighbor_post_ids.append(nid)
 
-        if neighbor_post_ids:
-            neighbor_posts = _repo.get_by_ids(neighbor_post_ids)
-            graph_results = [
-                SearchResult(
-                    post=p,
-                    result_type="post",
-                    item_id=p.id,
-                    content=p.content,
-                    metadata={
-                        "account_username": p.account_username,
-                        "account_acct": p.account_acct,
-                        "tags": p.tags,
-                    },
-                    score=0.5,
-                    source="graph",
-                )
-                for p in neighbor_posts
-            ]
-            results = results + graph_results
-            logger.info("Graph enrichment added %d neighbor posts.",
-                        len(graph_results))
+    if neighbor_post_ids:
+        neighbor_posts = _repo.get_by_ids(neighbor_post_ids)
+        graph_results = [
+            SearchResult(
+                post=p,
+                result_type="post",
+                item_id=p.id,
+                content=p.content,
+                metadata={
+                    "account_username": p.account_username,
+                    "account_acct": p.account_acct,
+                    "tags": p.tags,
+                },
+                score=0.5,
+                source="graph",
+            )
+            for p in neighbor_posts
+        ]
+        results = results + graph_results
+        logger.info("Graph enrichment added %d neighbor posts.",
+                    len(graph_results))
 
     # Step 3 – rerank by score, keep top-k
     results.sort(key=lambda x: x.score, reverse=True)
