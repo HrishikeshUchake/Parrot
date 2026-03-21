@@ -31,6 +31,10 @@ ENV/
 
 # Data files
 *.jsonl
+!activities.jsonl
+!feed.jsonl
+!messages.jsonl
+
 
 # Node / Frontend
 node_modules/
