@@ -1,4 +1,4 @@
-"""OllamaClient – async wrapper around the Ollama REST API."""
+"""OllamaClient async wrapper around the Ollama REST API."""
 from __future__ import annotations
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential

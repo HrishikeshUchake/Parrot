@@ -1,1 +1,48 @@
+# OS / MacOS
 .DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.env
+.venv/
+venv/
+ENV/
+
+# Data files
+*.jsonl
+
+# Node / Frontend
+node_modules/
+dist/
+dist-ssr/
+build/
+.next/
+out/
+coverage/
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo

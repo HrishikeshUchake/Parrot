@@ -2,12 +2,14 @@
 from __future__ import annotations
 from datetime import datetime
 from pydantic import BaseModel, Field
+from typing import Literal
 
 
 class Post(BaseModel):
     """Represents a single Mastodon status (toot)."""
 
-    id: str                              # Mastodon status ID (large integer as string)
+    # Mastodon status ID (large integer as string)
+    id: str
     content: str = ""                   # HTML-stripped status text
     created_at: str = ""                # ISO-8601 timestamp
     account_id: str = ""                # author's Mastodon account ID
@@ -27,8 +29,38 @@ class Post(BaseModel):
         return self.content.strip()
 
 
+class UserMessage(BaseModel):
+    """Represents a user-to-user message in the social graph."""
+
+    id: str
+    sender_name: str
+    receiver_name: str
+    text: str
+    date: str = ""
+    time_ms: int = 0
+    source: str = "individual_chat"
+    user_context_username: str = ""
+
+
+class UserComment(BaseModel):
+    """Represents a comment attached to a social post."""
+
+    id: str
+    post_id: str
+    commenter_name: str
+    content: str
+    time: str = ""
+    source: str = ""
+    user_context_username: str = ""
+
+
 class SearchResult(BaseModel):
-    post: Post
+    # For legacy post-only paths, `post` remains populated.
+    post: Post | None = None
+    result_type: Literal["post", "comment", "message"] = "post"
+    item_id: str = ""
+    content: str = ""
+    metadata: dict = Field(default_factory=dict)
     score: float
     source: str = "vector"   # "vector" | "keyword" | "hybrid"
 
