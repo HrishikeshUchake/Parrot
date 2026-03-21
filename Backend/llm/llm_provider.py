@@ -7,9 +7,11 @@ from .ollama_client import OllamaClient
 
 logger = logging.getLogger(__name__)
 
+
 class LLMProvider(Protocol):
     async def generate(self, prompt: str, system: str = "") -> str:
         ...
+
 
 class OpenAIProvider:
     def __init__(self):
@@ -23,7 +25,7 @@ class OpenAIProvider:
         if not self.api_key:
             logger.warning("OpenAI API key not set, falling back to Ollama")
             return await self._fallback.generate(prompt, system=system)
-            
+
         try:
             headers = {"Authorization": f"Bearer {self.api_key}"}
             payload = {
@@ -33,18 +35,21 @@ class OpenAIProvider:
                 "max_tokens": settings.llm_max_tokens,
             }
             if system:
-                payload["messages"].append({"role": "system", "content": system})
+                payload["messages"].append(
+                    {"role": "system", "content": system})
             payload["messages"].append({"role": "user", "content": prompt})
 
             url = f"{self.base_url.rstrip('/')}/chat/completions" if self.base_url else "https://api.openai.com/v1/chat/completions"
-            
+
             response = await self._client.post(url, headers=headers, json=payload)
             response.raise_for_status()
             data = response.json()
             return data["choices"][0]["message"]["content"]
         except Exception as e:
-            logger.warning(f"Remote LLM failed: {e}. Falling back to local Ollama.")
+            logger.warning(
+                f"Remote LLM failed: {e}. Falling back to local Ollama.")
             return await self._fallback.generate(prompt, system=system)
+
 
 def get_llm_provider() -> LLMProvider:
     if settings.llm_backend.lower() == "openai":

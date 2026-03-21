@@ -12,14 +12,15 @@ from ..llm.prompts import QUERY_ANALYSIS_PROMPT
 logger = logging.getLogger(__name__)
 _client = get_llm_provider()
 
+
 def _parse_date_range(date_str: str) -> tuple[str, str] | None:
     """Parse natural language date strings into ISO-8601 tuple (start, end)."""
     if not date_str:
         return None
-        
+
     date_str = date_str.lower().strip()
     now = datetime.now(timezone.utc)
-    
+
     try:
         if date_str == "today":
             start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -34,16 +35,20 @@ def _parse_date_range(date_str: str) -> tuple[str, str] | None:
             start = now - timedelta(days=30)
             return (start.isoformat(), now.isoformat())
         elif date_str == "this year":
-            start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+            start = now.replace(month=1, day=1, hour=0,
+                                minute=0, second=0, microsecond=0)
             return (start.isoformat(), now.isoformat())
-            
+
         # Basic regex for YYYY-MM-DD to YYYY-MM-DD
-        m = re.match(r"(\d{4}-\d{2}-\d{2})\s*(?:to|and|-)\s*(\d{4}-\d{2}-\d{2})", date_str)
+        m = re.match(
+            r"(\d{4}-\d{2}-\d{2})\s*(?:to|and|-)\s*(\d{4}-\d{2}-\d{2})", date_str)
         if m:
-            start_dt = datetime.strptime(m.group(1), "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            end_dt = datetime.strptime(m.group(2), "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
+            start_dt = datetime.strptime(
+                m.group(1), "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            end_dt = datetime.strptime(m.group(
+                2), "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
             return (start_dt.isoformat(), end_dt.isoformat())
-            
+
         # Add LLM parsing call if it gets complex, but for now we fallback gracefully
         # If parser fails, skip filter gracefully.
         return None
@@ -78,7 +83,7 @@ async def query_analyzer_node(state: AgentState) -> dict:
     filters = analysis.get("filters", {})
     tags = filters.get("tags", [])
     raw_date = filters.get("date_range", None)
-    
+
     date_filter = _parse_date_range(raw_date) if raw_date else None
 
     return {

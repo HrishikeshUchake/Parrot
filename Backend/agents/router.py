@@ -18,7 +18,8 @@ async def router_node(state: AgentState) -> dict:
     intent = state.get("intent", "open_ended")
     sub_queries = state.get("sub_queries", [])
 
-    ADVANCED_INTENTS = {"trend_analysis", "comparison", "open_ended", "summary"}
+    ADVANCED_INTENTS = {"trend_analysis",
+                        "comparison", "open_ended", "summary"}
 
     # Deterministic routing based on query analysis
     if complexity == "complex" or intent in ADVANCED_INTENTS or len(sub_queries) > 0:

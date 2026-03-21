@@ -309,7 +309,8 @@ class VectorStore:
 
         if date_range:
             start_date, end_date = date_range
-            clauses.append("p.created_at >= $start_date AND p.created_at <= $end_date")
+            clauses.append(
+                "p.created_at >= $start_date AND p.created_at <= $end_date")
             params["start_date"] = start_date
             params["end_date"] = end_date
 

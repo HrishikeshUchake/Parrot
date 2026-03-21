@@ -35,11 +35,11 @@ class VectorSearchStrategy:
             emb, top_k=top_k, where=where or None, date_range=date_range
         )
         results = []
-        
+
         # When filtering by metadata (e.g., specific author), use a lower threshold
         # since this is a metadata query, not a pure content similarity query
         threshold = 0.15 if where else settings.similarity_threshold
-        
+
         for h in hits:
             if h["score"] < threshold:
                 continue
@@ -152,8 +152,8 @@ class HybridSearchEngine:
         return merged[:top_k]
 
     def advanced_search(
-        self, 
-        queries: list[str], 
+        self,
+        queries: list[str],
         top_k: int = settings.advanced_top_k,
         date_range: tuple[str, str] | None = None,
         metadata_filter: dict | None = None,
