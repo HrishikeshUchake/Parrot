@@ -32,8 +32,12 @@ class Settings(BaseSettings):
 
     # --- Ollama / LLM ---
     llm_backend: str = "ollama"              # ollama or openai
+    analyzer_llm_backend: str = "ollama"     # query analyzer node backend
+    router_llm_backend: str = "ollama"       # router node backend
+    synthesis_llm_backend: str = "ollama"    # synthesis node backend
     openai_api_key: str = ""
     openai_base_url: str = ""
+    openai_model: str = "gpt-4o-mini"
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2"           # model tag pulled in Ollama
     llm_temperature: float = 0.1

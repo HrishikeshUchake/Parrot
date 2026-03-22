@@ -3,10 +3,12 @@
 Parrot is a backend-first system for retrieving and synthesizing answers from social-style data (posts, comments, and messages) using a graph-enhanced Retrieval-Augmented Generation (RAG) pipeline.
 
 The system combines:
+
 - LangGraph orchestration for multi-step agent flows
 - Neo4j as graph store plus native vector indexes
 - SentenceTransformer embeddings (E5 family)
-- Ollama (local LLM) with optional OpenAI-compatible fallback
+- Node-specific LLM routing (analyzer/router/synthesis can use different backends)
+- Ollama (local LLM) with optional OpenAI-compatible synthesis path
 - FastAPI for API serving and a built-in CLI for local workflows
 
 ## Current Project Status
@@ -14,12 +16,14 @@ The system combines:
 This repository is in active prototype-to-product hardening.
 
 What is production-relevant today:
+
 - End-to-end query flow from analysis to routing to retrieval to synthesis
 - Mixed-source retrieval over posts, comments, and messages
 - User-scoped import pipeline from JSONL datasets
 - Neo4j graph-neighbor enrichment in advanced retrieval
 
 What is still maturing:
+
 - Frontend implementation (currently scaffold only)
 - Automated tests and CI workflows
 - Expanded operational hardening and security guardrails
@@ -64,11 +68,13 @@ query_analyzer -> router -> {simple_retrieval | advanced_retrieval} -> synthesis
 ### Retrieval Strategy
 
 Simple retrieval:
+
 - Single-query hybrid search
 - Optional user-scoped semantic matches from messages and comments
 - Fast path for straightforward factual lookups
 
 Advanced retrieval:
+
 - Multi-query retrieval from decomposed sub-queries
 - Deduplicate and rerank by score
 - Graph-neighbor expansion over related posts
@@ -134,9 +140,32 @@ NEO4J_DATABASE=neo4j
 LLM_BACKEND=ollama
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=llama3.2
+OPENAI_MODEL=gpt-4o-mini
 
 EMBEDDING_MODEL=intfloat/e5-large-v2
 ```
+
+### Optional: Synthesis-only remote reasoning
+
+If you want query analysis and routing to stay local while only the final synthesis answer uses a remote model, configure:
+
+```env
+ANALYZER_LLM_BACKEND=ollama
+ROUTER_LLM_BACKEND=ollama
+SYNTHESIS_LLM_BACKEND=openai
+
+OPENAI_API_KEY=your_api_key
+OPENAI_MODEL=gpt-4o-mini
+# Optional for OpenAI-compatible gateways:
+# OPENAI_BASE_URL=https://your-endpoint/v1
+```
+
+Behavior summary:
+
+- `query_analyzer` uses `ANALYZER_LLM_BACKEND`
+- `router` uses `ROUTER_LLM_BACKEND`
+- `synthesis` uses `SYNTHESIS_LLM_BACKEND`
+- If remote synthesis fails, the provider falls back to local Ollama
 
 ### 4) Run API server
 
@@ -237,16 +266,21 @@ The following areas are configured in `Backend/config.py`:
 
 - Neo4j connection and index names
 - Embedding model and batch/cache behavior
-- LLM backend selection and generation settings
+- Global and node-specific LLM backend selection and generation settings
 - Retrieval defaults (`top_k`, thresholds)
 - Import batch sizes and mastodon-source options
 
 Commonly tuned settings:
+
 - `DEFAULT_TOP_K`
 - `ADVANCED_TOP_K`
 - `SIMILARITY_THRESHOLD`
 - `LLM_TEMPERATURE`
 - `LLM_MAX_TOKENS`
+- `ANALYZER_LLM_BACKEND`
+- `ROUTER_LLM_BACKEND`
+- `SYNTHESIS_LLM_BACKEND`
+- `OPENAI_MODEL`
 - `USER_DATA_IMPORT_BATCH_SIZE`
 
 ## Operational Notes
@@ -258,11 +292,13 @@ Commonly tuned settings:
 ## Security and Privacy Considerations
 
 Current implementation notes:
+
 - Data is persisted in Neo4j for retrieval.
 - User-scoped relationships (`CAN_SEE`) are used for contextual scoping.
 - You should enforce strict environment-based secret management and avoid default credentials in any shared environment.
 
 Recommended hardening for deployment:
+
 - Move all credentials to secure secret stores
 - Add request validation and rate limiting at API boundary
 - Add structured audit logging for retrieval and synthesis decisions
@@ -287,6 +323,7 @@ Recommended hardening for deployment:
 ## Known Gaps and Roadmap
 
 Near-term priorities:
+
 - Implement frontend experience in `Frontend/`
 - Add robust automated tests
 - Add CI workflows under `.github/`
