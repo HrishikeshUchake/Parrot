@@ -3,7 +3,7 @@
 QUERY_ANALYSIS_PROMPT = """You are a query analysis assistant for a social media analytics platform.
 
 Analyze the following user query and extract:
-1. intent: one of ["factual_lookup", "trend_analysis", "comparison", "summary", "open_ended", "meta"]
+1. intent: one of ["factual_lookup", "trend_analysis", "comparison", "summary", "open_ended", "meta", "analytics"]
 2. entities: list of key topics or usernames mentioned
 3. filters: any explicit filters with exact values only. 
    - Extract 'tags' as a list of strings if hashtags or specific tags are mentioned.
@@ -18,6 +18,10 @@ Analyze the following user query and extract:
      * Comparing multiple entities
      * Multi-step reasoning
    - Mark as "simple" if it's a direct factual lookup
+   - Mark as "complex" for aggregate analytics requests like:
+     * "who do I message the most"
+     * "what themes/topics appear most"
+     * "who engages most with my posts"
 
 Respond ONLY with a valid JSON object:
 {{

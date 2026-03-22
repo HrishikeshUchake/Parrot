@@ -6,11 +6,29 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from .state import AgentState
-from ..llm.llm_provider import get_llm_provider
+from ..llm.llm_provider import get_node_llm_provider
 from ..llm.prompts import QUERY_ANALYSIS_PROMPT
 
 logger = logging.getLogger(__name__)
-_client = get_llm_provider()
+_client = get_node_llm_provider("query_analyzer")
+
+
+_ANALYTICS_PATTERNS = [
+    "message the most",
+    "messages usually discuss",
+    "engage with my posts",
+    "engages with my posts",
+    "main topics i post",
+    "themes appear most",
+    "topics appear most",
+    "top topics",
+    "top themes",
+]
+
+
+def _is_analytics_query(query: str) -> bool:
+    q = (query or "").lower()
+    return any(p in q for p in _ANALYTICS_PATTERNS)
 
 
 def _parse_date_range(date_str: str) -> tuple[str, str] | None:
@@ -86,12 +104,23 @@ async def query_analyzer_node(state: AgentState) -> dict:
 
     date_filter = _parse_date_range(raw_date) if raw_date else None
 
+    intent = analysis.get("intent", "open_ended")
+    complexity = analysis.get("complexity", "simple")
+    sub_queries = analysis.get("sub_queries", [])
+
+    # Override uncertain LLM classifications for aggregate social analytics queries.
+    if _is_analytics_query(query):
+        intent = "analytics"
+        complexity = "complex"
+        if not sub_queries:
+            sub_queries = [query]
+
     return {
-        "intent": analysis.get("intent", "open_ended"),
+        "intent": intent,
         "entities": analysis.get("entities", []),
         "filters": filters,
         "date_filter": date_filter,
         "tag_filter": tags if tags else None,
-        "sub_queries": analysis.get("sub_queries", []),
-        "complexity": analysis.get("complexity", "simple"),
+        "sub_queries": sub_queries,
+        "complexity": complexity,
     }

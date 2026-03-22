@@ -4,11 +4,11 @@ import logging
 
 from .state import AgentState
 from ..database.models import SearchResult
-from ..llm.llm_provider import get_llm_provider
+from ..llm.llm_provider import get_node_llm_provider
 from ..llm.prompts import SYNTHESIS_PROMPT
 
 logger = logging.getLogger(__name__)
-_client = get_llm_provider()
+_client = get_node_llm_provider("synthesis")
 
 
 def _post_label(p) -> str:
@@ -76,6 +76,19 @@ def _format_context(results: list[SearchResult]) -> str:
 
 async def synthesis_node(state: AgentState) -> dict:
     """Generate a final answer grounded in retrieved documents."""
+    # Preserve deterministic retrieval direct answers (e.g. meta/count paths).
+    # Retrieval sets `answer` directly and can intentionally return no sources.
+    # In that case, avoid LLM synthesis overwriting a known-correct answer.
+    existing_answer = (state.get("answer") or "").strip()
+    if existing_answer and not state.get("search_results"):
+        return {
+            "answer": existing_answer,
+            "reasoning": (
+                f"Route: {state.get('route', 'unknown')} | "
+                "Source: retrieval_direct_answer"
+            ),
+        }
+
     results = state.get("search_results", [])
     context = _format_context(results)
     prompt = SYNTHESIS_PROMPT.format(query=state["query"], context=context)

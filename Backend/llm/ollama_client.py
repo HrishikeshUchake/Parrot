@@ -22,8 +22,15 @@ class OllamaClient:
         self._max_tokens = max_tokens
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8))
-    async def generate(self, prompt: str) -> str:
+    async def generate(self, prompt: str, system: str = "") -> str:
         """Non-streaming generation. Returns the model response text."""
+        if system:
+            return await self.chat(
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": prompt},
+                ]
+            )
         async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(
                 f"{self._base_url}/api/generate",
