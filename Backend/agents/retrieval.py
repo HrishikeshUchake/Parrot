@@ -20,6 +20,20 @@ _embedder = EmbeddingService()
 _META_PATTERNS = ["how many posts", "total posts",
                   "count of posts", "database size"]
 
+_MESSAGE_TOPIC_KEYWORDS = [
+    "work",
+    "music",
+    "book",
+    "fitness",
+    "health",
+    "weekend",
+    "food",
+    "tech",
+    "citylife",
+    "mindset",
+    "learning",
+]
+
 
 def _extract_user_context(state: AgentState) -> str:
     """Get username from explicit state/filter first, then fallback to query hints."""
@@ -61,6 +75,118 @@ def _to_comment_result(hit: dict) -> SearchResult:
         score=float(hit.get("score", 0.0)),
         source="vector",
     )
+
+
+def _format_ranked(rows: list[tuple[str, int]]) -> str:
+    if not rows:
+        return "none found"
+    return ", ".join(f"{name} ({count})" for name, count in rows)
+
+
+def _top_message_partners(username: str, limit: int = 5) -> list[tuple[str, int]]:
+    cypher = """
+        MATCH (m:Message)
+        WHERE m.user_context_username = $username
+          AND (m.sender_name = $username OR m.receiver_name = $username)
+        WITH CASE
+            WHEN m.sender_name = $username THEN m.receiver_name
+            ELSE m.sender_name
+        END AS partner
+        WHERE partner IS NOT NULL
+          AND trim(partner) <> ""
+          AND partner <> $username
+        RETURN partner AS name, count(*) AS c
+        ORDER BY c DESC, name ASC
+        LIMIT $limit
+    """
+    with _store._driver.session(database=_store._db) as session:
+        rows = session.run(cypher, username=username,
+                           limit=limit).data()  # noqa: SLF001
+    return [(str(r.get("name", "")), int(r.get("c", 0))) for r in rows]
+
+
+def _top_message_topics(username: str, limit: int = 5) -> list[tuple[str, int]]:
+    cypher = """
+        MATCH (m:Message)
+        WHERE m.user_context_username = $username
+          AND (m.sender_name = $username OR m.receiver_name = $username)
+        WITH toLower(coalesce(m.text, "")) AS txt
+        UNWIND $keywords AS kw
+        WITH kw, txt
+        WHERE txt CONTAINS kw
+        RETURN kw AS topic, count(*) AS c
+        ORDER BY c DESC, topic ASC
+        LIMIT $limit
+    """
+    with _store._driver.session(database=_store._db) as session:
+        rows = session.run(
+            cypher,
+            username=username,
+            keywords=_MESSAGE_TOPIC_KEYWORDS,
+            limit=limit,
+        ).data()  # noqa: SLF001
+    return [(str(r.get("topic", "")), int(r.get("c", 0))) for r in rows]
+
+
+def _top_engagers(username: str, limit: int = 5) -> list[tuple[str, int]]:
+    cypher = """
+        MATCH (p:Post {user_context_username: $username})-[:HAS_COMMENT]->(c:Comment)
+        WHERE c.commenter_name IS NOT NULL
+          AND trim(c.commenter_name) <> ""
+          AND c.commenter_name <> $username
+        RETURN c.commenter_name AS name, count(*) AS c
+        ORDER BY c DESC, name ASC
+        LIMIT $limit
+    """
+    with _store._driver.session(database=_store._db) as session:
+        rows = session.run(cypher, username=username,
+                           limit=limit).data()  # noqa: SLF001
+    return [(str(r.get("name", "")), int(r.get("c", 0))) for r in rows]
+
+
+def _top_themes_authored(username: str, limit: int = 5) -> list[tuple[str, int]]:
+    cypher = """
+        MATCH (p:Post {user_context_username: $username})-[:HAS_TAG]->(t:Tag)
+        WHERE p.account_username = $username
+        RETURN toLower(t.name) AS tag, count(*) AS c
+        ORDER BY c DESC, tag ASC
+        LIMIT $limit
+    """
+    with _store._driver.session(database=_store._db) as session:
+        rows = session.run(cypher, username=username,
+                           limit=limit).data()  # noqa: SLF001
+    return [(str(r.get("tag", "")), int(r.get("c", 0))) for r in rows]
+
+
+def _top_themes_interactions(username: str, limit: int = 5) -> list[tuple[str, int]]:
+    cypher = """
+        MATCH (p:Post {user_context_username: $username})-[:HAS_TAG]->(t:Tag)
+        WHERE p.account_username = $username
+           OR EXISTS {
+               MATCH (p)-[:HAS_COMMENT]->(c:Comment {commenter_name: $username})
+           }
+        RETURN toLower(t.name) AS tag, count(*) AS c
+        ORDER BY c DESC, tag ASC
+        LIMIT $limit
+    """
+    with _store._driver.session(database=_store._db) as session:
+        rows = session.run(cypher, username=username,
+                           limit=limit).data()  # noqa: SLF001
+
+    ranked = [(str(r.get("tag", "")), int(r.get("c", 0))) for r in rows]
+    if ranked:
+        return ranked
+
+    fallback = """
+        MATCH (p:Post {user_context_username: $username})-[:HAS_TAG]->(t:Tag)
+        RETURN toLower(t.name) AS tag, count(*) AS c
+        ORDER BY c DESC, tag ASC
+        LIMIT $limit
+    """
+    with _store._driver.session(database=_store._db) as session:
+        rows = session.run(fallback, username=username,
+                           limit=limit).data()  # noqa: SLF001
+    return [(str(r.get("tag", "")), int(r.get("c", 0))) for r in rows]
 
 
 async def simple_retrieval_node(state: AgentState) -> dict:
@@ -212,3 +338,74 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
 
     logger.info("Advanced retrieval final: %d results", len(results))
     return {"search_results": results}
+
+
+async def analytics_retrieval_node(state: AgentState) -> dict:
+    """Deterministic aggregate analytics over user-scoped social graph data."""
+    query = (state.get("query") or "").lower()
+    user_context = _extract_user_context(state)
+
+    if not user_context:
+        return {
+            "search_results": [],
+            "answer": (
+                "I can run analytics once you provide a user context, "
+                "for example: 'for albert336'."
+            ),
+        }
+
+    if "message the most" in query:
+        top = _top_message_partners(user_context)
+        if not top:
+            answer = f"No direct message history found for user '{user_context}'."
+        else:
+            best_name, best_count = top[0]
+            answer = (
+                f"You message {best_name} the most ({best_count} messages). "
+                f"Top message partners: {_format_ranked(top)}."
+            )
+        return {"search_results": [], "answer": answer}
+
+    if "messages usually discuss" in query or "direct messages usually discuss" in query:
+        top = _top_message_topics(user_context)
+        if not top:
+            answer = f"No recurring direct-message topics found for user '{user_context}'."
+        else:
+            answer = f"Your direct messages most often discuss: {_format_ranked(top)}."
+        return {"search_results": [], "answer": answer}
+
+    if "engage with my posts" in query or "engages with my posts" in query:
+        top = _top_engagers(user_context)
+        if not top:
+            answer = f"No engagement comments found for user '{user_context}'."
+        else:
+            best_name, best_count = top[0]
+            answer = (
+                f"{best_name} engages with your posts the most ({best_count} comments). "
+                f"Top engagers: {_format_ranked(top)}."
+            )
+        return {"search_results": [], "answer": answer}
+
+    if "main topics i post" in query:
+        top = _top_themes_authored(user_context)
+        if not top:
+            answer = f"No authored post themes found for user '{user_context}'."
+        else:
+            answer = f"Your main posting themes are: {_format_ranked(top)}."
+        return {"search_results": [], "answer": answer}
+
+    if "themes appear most" in query or "topics appear most" in query or "top themes" in query or "top topics" in query:
+        top = _top_themes_interactions(user_context)
+        if not top:
+            answer = f"No recurring themes found in interacted posts for user '{user_context}'."
+        else:
+            answer = f"The most common themes in posts you interact with are: {_format_ranked(top)}."
+        return {"search_results": [], "answer": answer}
+
+    top = _top_themes_interactions(user_context)
+    if top:
+        answer = f"Top themes in your social graph are: {_format_ranked(top)}."
+    else:
+        answer = f"I couldn't find enough analytics data for user '{user_context}'."
+
+    return {"search_results": [], "answer": answer}

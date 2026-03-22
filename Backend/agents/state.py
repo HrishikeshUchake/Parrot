@@ -21,7 +21,7 @@ class AgentState(TypedDict):
     complexity: str
 
     # ── After Router
-    route: str                              # "simple" | "advanced"
+    route: str                              # "simple" | "analytics" | "advanced"
 
     # ── After Retrieval (reducer accumulates across branches)
     search_results: Annotated[list[SearchResult], operator.add]
