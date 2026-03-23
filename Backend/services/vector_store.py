@@ -645,7 +645,8 @@ class VectorStore:
                     user_context_username=username,
                     embedding=chunk["embedding"],
                 )
-        logger.info("Upserted %d ThreadChunks for user '%s'.", len(chunks), username)
+        logger.info("Upserted %d ThreadChunks for user '%s'.",
+                    len(chunks), username)
 
     # ------------------------------------------------------------------
     def similarity_search_threads(

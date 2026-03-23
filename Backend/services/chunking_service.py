@@ -8,12 +8,14 @@ from Backend.llm.llm_provider import get_node_llm_provider
 
 logger = logging.getLogger(__name__)
 
+
 class ChunkingService:
     def __init__(self):
         try:
             llm = get_node_llm_provider("chunking")
         except Exception as exc:
-            logger.error("Failed to initialize LLM provider for chunking: %s", exc)
+            logger.error(
+                "Failed to initialize LLM provider for chunking: %s", exc)
             raise RuntimeError(
                 "ChunkingService initialization failed: unable to obtain LLM provider for 'chunking'"
             ) from exc
@@ -73,8 +75,9 @@ class ChunkingService:
         ]
 
         # Sort comments by time if possible
-        comments_sorted = sorted(comments, key=lambda x: str(x.get("time", "")))
-        
+        comments_sorted = sorted(
+            comments, key=lambda x: str(x.get("time", "")))
+
         for c in comments_sorted:
             author = c.get("commenter_name", "")
             if author:
@@ -89,7 +92,8 @@ class ChunkingService:
         # Format thread for summarization
         thread_text_parts = []
         for msg in messages:
-            thread_text_parts.append(f"{msg['author']} [{msg['time']}]: {msg['content']}")
+            thread_text_parts.append(
+                f"{msg['author']} [{msg['time']}]: {msg['content']}")
 
         full_text = "\n".join(thread_text_parts)
         summary = await self.summarize_thread(full_text)
@@ -102,7 +106,8 @@ class ChunkingService:
             messages=messages,
             summary=summary,
             created_at=post.get("created_at", ""),
-            updated_at=messages[-1].get("time", "") if messages else post.get("created_at", ""),
+            updated_at=messages[-1].get("time",
+                                        "") if messages else post.get("created_at", ""),
         )
 
         chunks = self._chunk_thread(thread, full_text)
@@ -170,7 +175,7 @@ class ChunkingService:
 
     def _chunk_thread(self, thread: ConversationThread, full_text: str) -> List[ThreadChunk]:
         chunks = []
-        
+
         # 1. Add summary as the parent chunk
         if thread.summary:
             chunks.append(ThreadChunk(
@@ -187,7 +192,7 @@ class ChunkingService:
         current_chunk_lines = []
         current_length = 0
         chunk_index = 1
-        
+
         for line in lines:
             line_len = len(line.split())
             if current_length + line_len > self._max_chunk_size and current_chunk_lines:
@@ -202,10 +207,10 @@ class ChunkingService:
                 chunk_index += 1
                 current_chunk_lines = []
                 current_length = 0
-            
+
             current_chunk_lines.append(line)
             current_length += line_len
-            
+
         if current_chunk_lines:
             chunk_content = "\n".join(current_chunk_lines)
             chunks.append(ThreadChunk(

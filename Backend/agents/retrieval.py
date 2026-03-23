@@ -90,6 +90,7 @@ def _to_thread_result(hit: dict) -> SearchResult:
         source="vector",
     )
 
+
 def _to_comment_result(hit: dict) -> SearchResult:
     return SearchResult(
         post=None,
@@ -134,7 +135,8 @@ def _safe_iso_date(value: str) -> str:
         try:
             datetime.fromisoformat(date_part)
         except ValueError:
-            logger.warning("Invalid ISO date string passed to _safe_iso_date: %r", value)
+            logger.warning(
+                "Invalid ISO date string passed to _safe_iso_date: %r", value)
             return ""
 
     return date_part[:10]
@@ -549,7 +551,8 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
       3. Merge, deduplicate, and rerank.
     """
     if state.get("requires_graph_traversal"):
-        logger.info("Advanced retrieval guardrail redirected to analytics path.")
+        logger.info(
+            "Advanced retrieval guardrail redirected to analytics path.")
         return await analytics_retrieval_node(state)
 
     queries: list[str] = list(state.get("sub_queries") or [])
@@ -595,7 +598,6 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
                 top_k=3,
             ):
                 results.append(_to_thread_result(h))
-
 
     # Deduplicate by (type, id), keeping best score.
     dedup: dict[tuple[str, str], SearchResult] = {}
@@ -676,7 +678,8 @@ async def analytics_retrieval_node(state: AgentState) -> dict:
             "answer": payload["summary"],
         }
 
-    is_trend_query = analytics_kind == "trend" or state.get("intent") == "trend_analysis"
+    is_trend_query = analytics_kind == "trend" or state.get(
+        "intent") == "trend_analysis"
     if is_trend_query:
         payload = _build_trend_payload(state, user_context)
     else:

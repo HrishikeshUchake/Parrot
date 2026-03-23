@@ -110,7 +110,8 @@ def _render_analytics_answer(payload: dict) -> str:
         end = window.get("end", "")
         bucket_days = window.get("bucket_days", "")
         if start and end:
-            lines.append(f"Window: {start[:10]} to {end[:10]} (bucket={bucket_days}d)")
+            lines.append(
+                f"Window: {start[:10]} to {end[:10]} (bucket={bucket_days}d)")
 
         totals = metrics.get("totals", {})
         if totals:
