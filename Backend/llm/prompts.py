@@ -22,6 +22,8 @@ Analyze the following user query and extract:
      * "who do I message the most"
      * "what themes/topics appear most"
      * "who engages most with my posts"
+  6. requires_graph_traversal: true when the query asks for aggregation or trends over user history
+  7. analytics_kind: one of ["none", "aggregate", "trend"]
 
 Respond ONLY with a valid JSON object:
 {{
@@ -32,7 +34,9 @@ Respond ONLY with a valid JSON object:
     "date_range": "..."
   }},
   "sub_queries": [],
-  "complexity": "simple"
+  "complexity": "simple",
+  "requires_graph_traversal": false,
+  "analytics_kind": "none"
 }}
 
 User query: {query}

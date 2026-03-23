@@ -167,16 +167,22 @@ Behavior summary:
 - `synthesis` uses `SYNTHESIS_LLM_BACKEND`
 - If remote synthesis fails, the provider falls back to local Ollama
 
-### 4) Run API server
+### 4) Fetch Data
+
+```bash
+python -m Backend.scripts.fetch_user_data --username <your-username>
+```
+
+### 5) Run API server
 
 ```bash
 uvicorn Backend.main:app --reload --port 8000
 ```
 
-### 5) Run CLI mode
+### 6) Run CLI mode
 
 ```bash
-python -m Backend.main
+python -m Backend.main --username <your-username>
 ```
 
 ## API Usage
@@ -329,11 +335,3 @@ Near-term priorities:
 - Add CI workflows under `.github/`
 - Improve observability and error surfaces
 - Expand project documentation in `Documents/`
-
-## License
-
-No explicit license file is currently present in this repository. Add one before external distribution.
-
-## Support
-
-Use repository issues and discussions for bug reports, support questions, and feature requests.

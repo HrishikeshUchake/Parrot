@@ -19,12 +19,15 @@ class AgentState(TypedDict):
     tag_filter: NotRequired[list[str] | None]
     sub_queries: list[str]
     complexity: str
+    requires_graph_traversal: NotRequired[bool]
+    analytics_kind: NotRequired[str]          # "none" | "aggregate" | "trend"
 
     # ── After Router
     route: str                              # "simple" | "analytics" | "advanced"
 
     # ── After Retrieval (reducer accumulates across branches)
     search_results: Annotated[list[SearchResult], operator.add]
+    analytics_payload: NotRequired[dict]
 
     # ── After Synthesis
     answer: str

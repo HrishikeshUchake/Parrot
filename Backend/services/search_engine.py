@@ -86,9 +86,6 @@ class KeywordSearchStrategy:
         posts = self._repo.keyword_search(query, limit=top_k)
         results: list[SearchResult] = []
         for rank, p in enumerate(posts, start=1):
-            # Keep keyword hits useful as recall support, but avoid overpowering
-            # semantic vector relevance by assigning a bounded, rank-decayed score.
-            kw_score = max(0.12, 0.38 - (rank - 1) * 0.03)
             results.append(
                 SearchResult(
                     post=p,
@@ -100,7 +97,8 @@ class KeywordSearchStrategy:
                         "account_acct": p.account_acct,
                         "tags": p.tags,
                     },
-                    score=kw_score,
+                    # Per-source score; final fusion/reranking is done via RRF in HybridSearchEngine
+                    score=1.0 / rank,
                     source="keyword",
                 )
             )
@@ -132,21 +130,33 @@ class HybridSearchEngine:
         )
         kw_results = self._keyword.search(query, top_k=top_k)
 
-        seen: set[str] = set()
-        merged: list[SearchResult] = []
+        # Reciprocal Rank Fusion
+        k_rrf = 60
+        scores: dict[str, float] = {}
+        merged_dict: dict[str, SearchResult] = {}
+        vec_ids: set[str] = set()
 
-        for r in vec_results:
-            if r.post.id not in seen:
-                seen.add(r.post.id)
-                merged.append(r)
+        for rank, r in enumerate(vec_results, start=1):
+            pid = r.post.id
+            vec_ids.add(pid)
+            if pid not in merged_dict:
+                merged_dict[pid] = r
+            scores[pid] = scores.get(pid, 0.0) + 1.0 / (k_rrf + rank)
 
-        for r in kw_results:
-            if r.post.id not in seen:
-                seen.add(r.post.id)
+        for rank, r in enumerate(kw_results, start=1):
+            pid = r.post.id
+            if pid not in merged_dict:
                 r.source = "keyword"
-                # For keyword results, date_range filtering would either be done in DB logic or post-filtered here.
-                # For now, simplistic approach is to let vector search handle the date precision.
-                merged.append(r)
+                merged_dict[pid] = r
+            else:
+                merged_dict[pid].source = "hybrid"
+            scores[pid] = scores.get(pid, 0.0) + 1.0 / (k_rrf + rank)
+
+        merged: list[SearchResult] = []
+        for pid, score in scores.items():
+            result = merged_dict[pid]
+            result.score = score
+            merged.append(result)
 
         merged.sort(key=lambda x: x.score, reverse=True)
         return merged[:top_k]

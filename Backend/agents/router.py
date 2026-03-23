@@ -17,9 +17,23 @@ async def router_node(state: AgentState) -> dict:
     complexity = state.get("complexity", "simple")
     intent = state.get("intent", "open_ended")
     sub_queries = state.get("sub_queries", [])
+    requires_graph = bool(state.get("requires_graph_traversal", False))
+    analytics_kind = state.get("analytics_kind", "none")
 
     ADVANCED_INTENTS = {"trend_analysis",
                         "comparison", "open_ended", "summary"}
+
+    if requires_graph:
+        route = "analytics"
+        logger.info(
+            "Router decision: %s (requires_graph=%s, analytics_kind=%s, intent=%s, complexity=%s)",
+            route,
+            requires_graph,
+            analytics_kind,
+            intent,
+            complexity,
+        )
+        return {"route": route}
 
     if intent == "analytics":
         route = "analytics"

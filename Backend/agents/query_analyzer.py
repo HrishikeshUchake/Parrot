@@ -25,10 +25,37 @@ _ANALYTICS_PATTERNS = [
     "top themes",
 ]
 
+_TREND_PATTERNS = [
+    "trend",
+    "over time",
+    "over the last",
+    "month over month",
+    "week over week",
+    "daily",
+    "weekly",
+    "monthly",
+    "change over",
+    "increasing",
+    "decreasing",
+    "growth",
+    "decline",
+]
+
 
 def _is_analytics_query(query: str) -> bool:
     q = (query or "").lower()
     return any(p in q for p in _ANALYTICS_PATTERNS)
+
+
+def _is_trend_query(query: str) -> bool:
+    q = (query or "").lower()
+    return any(p in q for p in _TREND_PATTERNS)
+
+
+def _requires_graph_traversal(query: str, intent: str) -> bool:
+    if intent in {"analytics", "trend_analysis"}:
+        return True
+    return _is_analytics_query(query) or _is_trend_query(query)
 
 
 def _parse_date_range(date_str: str) -> tuple[str, str] | None:
@@ -107,13 +134,28 @@ async def query_analyzer_node(state: AgentState) -> dict:
     intent = analysis.get("intent", "open_ended")
     complexity = analysis.get("complexity", "simple")
     sub_queries = analysis.get("sub_queries", [])
+    is_analytics = _is_analytics_query(query)
+    is_trend = intent == "trend_analysis" or _is_trend_query(query)
+    requires_graph_traversal = _requires_graph_traversal(query, intent)
+    analytics_kind = "none"
 
     # Override uncertain LLM classifications for aggregate social analytics queries.
-    if _is_analytics_query(query):
+    if is_analytics:
         intent = "analytics"
         complexity = "complex"
         if not sub_queries:
             sub_queries = [query]
+
+    if is_trend:
+        analytics_kind = "trend"
+        complexity = "complex"
+        if not sub_queries:
+            sub_queries = [query]
+    elif is_analytics:
+        analytics_kind = "aggregate"
+
+    if requires_graph_traversal and not sub_queries:
+        sub_queries = [query]
 
     return {
         "intent": intent,
@@ -123,4 +165,6 @@ async def query_analyzer_node(state: AgentState) -> dict:
         "tag_filter": tags if tags else None,
         "sub_queries": sub_queries,
         "complexity": complexity,
+        "requires_graph_traversal": requires_graph_traversal,
+        "analytics_kind": analytics_kind,
     }

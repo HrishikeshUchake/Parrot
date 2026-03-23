@@ -43,6 +43,22 @@ _CREATE_COMMENT_VECTOR_INDEX = """
     }}
 """
 
+_CREATE_THREAD_CHUNK_VECTOR_INDEX = """
+    CREATE VECTOR INDEX {index} IF NOT EXISTS
+    FOR (tc:ThreadChunk) ON (tc.embedding)
+    OPTIONS {{
+        indexConfig: {{
+            `vector.dimensions`: {dim},
+            `vector.similarity_function`: 'cosine'
+        }}
+    }}
+"""
+
+_CREATE_FULLTEXT_INDEX = """
+    CREATE FULLTEXT INDEX post_fulltext IF NOT EXISTS
+    FOR (p:Post) ON EACH [p.content, p.tags_json, p.account_username, p.account_acct]
+"""
+
 _UPSERT_POST = """
     MERGE (p:Post {id: $id})
     SET p.content              = $content,
@@ -141,6 +157,56 @@ _UPSERT_COMMENT = """
     WITH c
     MERGE (ctx:User {username: $user_context_username})
     MERGE (ctx)-[:CAN_SEE]->(c)
+"""
+
+_UPSERT_THREAD = """
+    MERGE (t:ConversationThread {id: $id})
+    SET t.source_type   = $source_type,
+        t.participants  = $participants,
+        t.summary       = $summary,
+        t.created_at    = $created_at,
+        t.updated_at    = $updated_at,
+        t.messages_json = $messages_json,
+        t.user_context_username = $user_context_username
+    WITH t
+    UNWIND $participants AS p
+    MERGE (u:User {username: p})
+    MERGE (u)-[:PARTICIPATED_IN]->(t)
+    WITH t
+    MERGE (ctx:User {username: $user_context_username})
+    MERGE (ctx)-[:CAN_SEE]->(t)
+"""
+
+_UPSERT_THREAD_CHUNK = """
+    MERGE (tc:ThreadChunk {id: $id})
+    SET tc.thread_id    = $thread_id,
+        tc.content      = $content,
+        tc.chunk_index  = $chunk_index,
+        tc.is_summary   = $is_summary,
+        tc.user_context_username = $user_context_username,
+        tc.embedding    = $embedding
+    WITH tc
+    MATCH (t:ConversationThread {id: $thread_id})
+    MERGE (tc)-[:BELONGS_TO]->(t)
+    WITH tc
+    MERGE (ctx:User {username: $user_context_username})
+    MERGE (ctx)-[:CAN_SEE]->(tc)
+"""
+
+_THREAD_CHUNK_VECTOR_SEARCH = """
+    CALL db.index.vector.queryNodes($index, $top_k, $embedding)
+    YIELD node AS tc, score
+    WHERE tc.user_context_username = $username
+    MATCH (tc)-[:BELONGS_TO]->(t:ConversationThread)
+    RETURN t.id AS id,
+           t.source_type AS source_type,
+           t.participants AS participants,
+           t.summary AS summary,
+           t.messages_json AS messages_json,
+           t.created_at AS created_at,
+           t.updated_at AS updated_at,
+           tc.content AS chunk_content,
+           score
 """
 
 _VECTOR_SEARCH = """
@@ -244,6 +310,7 @@ class VectorStore:
         self._index = settings.neo4j_vector_index
         self._message_index = settings.neo4j_message_vector_index
         self._comment_index = settings.neo4j_comment_vector_index
+        self._thread_chunk_index = settings.neo4j_thread_chunk_vector_index
         self._ensure_index()
 
     # ------------------------------------------------------------------
@@ -261,10 +328,17 @@ class VectorStore:
             index=self._comment_index,
             dim=settings.neo4j_embedding_dim,
         )
+        thread_chunk_cypher = _CREATE_THREAD_CHUNK_VECTOR_INDEX.format(
+            index=self._thread_chunk_index,
+            dim=settings.neo4j_embedding_dim,
+        )
+        fulltext_cypher = _CREATE_FULLTEXT_INDEX
         with self._driver.session(database=self._db) as session:
             session.run(cypher)
             session.run(message_cypher)
             session.run(comment_cypher)
+            session.run(thread_chunk_cypher)
+            session.run(fulltext_cypher)
         logger.info("Neo4j vector index '%s' ready.", self._index)
 
     # ------------------------------------------------------------------
@@ -541,8 +615,95 @@ class VectorStore:
         )
 
     # ------------------------------------------------------------------
+    def upsert_thread(self, thread_data: dict[str, Any], username: str) -> None:
+        """Upsert a ConversationThread node."""
+        with self._driver.session(database=self._db) as session:
+            session.run(
+                _UPSERT_THREAD,
+                id=thread_data["id"],
+                source_type=thread_data["source_type"],
+                participants=thread_data["participants"],
+                summary=thread_data.get("summary", ""),
+                messages_json=json.dumps(thread_data.get("messages", [])),
+                created_at=thread_data.get("created_at", ""),
+                updated_at=thread_data.get("updated_at", ""),
+                user_context_username=username,
+            )
+
+    # ------------------------------------------------------------------
+    def upsert_thread_chunks(self, chunks: list[dict[str, Any]], username: str) -> None:
+        """Batch upsert ThreadChunk nodes with their embeddings."""
+        with self._driver.session(database=self._db) as session:
+            for chunk in chunks:
+                session.run(
+                    _UPSERT_THREAD_CHUNK,
+                    id=str(chunk["id"]),
+                    thread_id=chunk["thread_id"],
+                    content=chunk["content"],
+                    chunk_index=chunk.get("chunk_index", 0),
+                    is_summary=chunk.get("is_summary", False),
+                    user_context_username=username,
+                    embedding=chunk["embedding"],
+                )
+        logger.info("Upserted %d ThreadChunks for user '%s'.", len(chunks), username)
+
+    # ------------------------------------------------------------------
+    def similarity_search_threads(
+        self,
+        query_embedding: list[float],
+        username: str,
+        top_k: int = settings.default_top_k,
+    ) -> list[dict[str, Any]]:
+        """Search ThreadChunks and return their parent ConversationThreads."""
+        params = {
+            "index": self._thread_chunk_index,
+            "top_k": top_k,
+            "embedding": query_embedding,
+            "username": username,
+        }
+        with self._driver.session(database=self._db) as session:
+            records = session.run(_THREAD_CHUNK_VECTOR_SEARCH, **params).data()
+
+        # Group by thread_id to return unique threads
+        threads = {}
+        for r in records:
+            thread_id = r["id"]
+            if thread_id not in threads:
+                threads[thread_id] = {
+                    "id": thread_id,
+                    "document": r["summary"] or r["chunk_content"],
+                    "metadata": {
+                        "source_type": r["source_type"],
+                        "participants": r["participants"],
+                        "summary": r["summary"],
+                        "created_at": r["created_at"],
+                        "updated_at": r["updated_at"],
+                        "messages": json.loads(r["messages_json"]) if r.get("messages_json") else [],
+                        "matched_chunk": r["chunk_content"],
+                        "type": "thread",
+                    },
+                    "score": float(r["score"]),
+                    "max_score": float(r["score"])
+                }
+                continue
+
+            # Keep thread metadata stable, but track best matching chunk/score.
+            if r["score"] > threads[thread_id]["max_score"]:
+                threads[thread_id]["score"] = float(r["score"])
+                threads[thread_id]["max_score"] = float(r["score"])
+                threads[thread_id]["metadata"]["matched_chunk"] = r["chunk_content"]
+
+        ret = sorted(threads.values(), key=lambda x: x["score"], reverse=True)
+        return [{"id": t["id"], "document": t["document"], "metadata": t["metadata"], "score": t["score"]} for t in ret]
+
+    # ------------------------------------------------------------------
     def close(self) -> None:
         self._driver.close()
+
+    def run_query(self, cypher: str, **params: Any) -> list[dict[str, Any]]:
+        """Execute a read query against Neo4j and return all rows as dicts."""
+        with self._driver.session(database=self._db) as session:
+            return session.run(cypher, **params).data()
 
     @property
     def count(self) -> int:
