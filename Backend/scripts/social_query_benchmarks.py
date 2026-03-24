@@ -37,7 +37,8 @@ def main() -> None:
 
     for r in rel:
         t = r.get("tag_list")
-        arr = t if isinstance(t, list) else (str(t).split(",") if isinstance(t, str) else [])
+        arr = t if isinstance(t, list) else (
+            str(t).split(",") if isinstance(t, str) else [])
         for x in arr:
             x = str(x).strip().lower()
             if x:

@@ -30,7 +30,8 @@ QUERIES = [
 async def main() -> None:
     out = []
     for q in QUERIES:
-        state = {"query": q, "search_results": [], "user_context_username": USER}
+        state = {"query": q, "search_results": [],
+                 "user_context_username": USER}
         try:
             result = await asyncio.wait_for(
                 rag_graph.ainvoke(state), timeout=QUERY_TIMEOUT_SECONDS
