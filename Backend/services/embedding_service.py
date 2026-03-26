@@ -23,12 +23,13 @@ class EmbeddingService:
 
     def encode(self, text: str) -> list[float]:
         """Return a normalised embedding for a single text (cached)."""
-        return self._encode_cached(text)
+        return self._encode_cached(self._prepare_text(text, is_query=True))
 
     def encode_batch(self, texts: list[str]) -> list[list[float]]:
         """Return normalised embeddings for a batch (no LRU for ingestion)."""
+        prepared = [self._prepare_text(t, is_query=False) for t in texts]
         vecs = self._model.encode(
-            texts,
+            prepared,
             batch_size=settings.embedding_batch_size,
             normalize_embeddings=True,
             show_progress_bar=False,
@@ -38,3 +39,12 @@ class EmbeddingService:
     def _encode_single(self, text: str) -> list[float]:
         vec = self._model.encode(text, normalize_embeddings=True)
         return vec.tolist()
+
+    def _prepare_text(self, text: str, *, is_query: bool) -> str:
+        model = settings.embedding_model.lower()
+        clean = (text or "").strip()
+        # E5 family expects explicit task prefixes for best retrieval quality.
+        if "e5" in model:
+            prefix = "query: " if is_query else "passage: "
+            return f"{prefix}{clean}"
+        return clean
