@@ -46,3 +46,4 @@ coverage/
 .idea/
 *.swp
 *.swo
+Backend/.env
