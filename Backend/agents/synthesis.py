@@ -1,14 +1,44 @@
-"""Synthesis node generates final answer with citations using Llama."""
+"""Synthesis node generates final answer with citations using LLM + Privacy."""
 from __future__ import annotations
 import logging
 
 from .state import AgentState
 from ..database.models import SearchResult
 from ..llm.ollama_client import OllamaClient
+from ..llm.openrouter_client import OpenRouterClient
 from ..llm.prompts import SYNTHESIS_PROMPT
+from ..services.privacy import PresidioPrivatizer, NoOpPrivatizer
+from ..config import settings
 
 logger = logging.getLogger(__name__)
-_client = OllamaClient()
+
+# Initialize LLM client based on configuration
+def _init_llm_client():
+    """Initialize the appropriate LLM client (Ollama or OpenRouter)."""
+    if settings.llm_provider.lower() == "openrouter":
+        return OpenRouterClient()
+    else:
+        return OllamaClient()
+
+
+# Initialize privacy layer
+def _init_privatizer():
+    """Initialize the appropriate privatizer (Presidio or NoOp)."""
+    if not settings.privacy_enabled:
+        return NoOpPrivatizer()
+
+    if settings.privacy_anonymizer.lower() == "presidio":
+        try:
+            return PresidioPrivatizer()
+        except ImportError:
+            logger.warning("Presidio not available, using NoOp privatizer")
+            return NoOpPrivatizer()
+    else:
+        return NoOpPrivatizer()
+
+
+_client = _init_llm_client()
+_privatizer = _init_privatizer()
 
 
 def _format_context(results: list[SearchResult]) -> str:
@@ -32,21 +62,50 @@ def _format_context(results: list[SearchResult]) -> str:
 
 
 async def synthesis_node(state: AgentState) -> dict:
-    """Generate a final answer grounded in retrieved documents."""
+    """Generate a final answer grounded in retrieved documents with privacy protection.
+
+    Flow:
+    1. Format context from search results
+    2. Anonymize content using Presidio (if enabled)
+    3. Send anonymized context to LLM
+    4. Restore tokens in response
+    5. Return restored answer to user
+    """
     results = state.get("search_results", [])
     context = _format_context(results)
-    prompt = SYNTHESIS_PROMPT.format(query=state["query"], context=context)
+
+    # Step 1: Anonymize before sending to LLM
+    anonymized_context = _privatizer.privatize_context(context)
+
+    logger.debug(f"Original context length: {len(context)}")
+    logger.debug(f"Anonymized context length: {len(anonymized_context)}")
+    if settings.privacy_enabled:
+        logger.debug(f"PII mappings: {_privatizer.get_current_mappings()}")
+
+    # Step 2: Create prompt with anonymized context
+    prompt = SYNTHESIS_PROMPT.format(
+        query=state["query"],
+        context=anonymized_context
+    )
 
     try:
+        # Step 3: Call LLM with anonymized content
         answer = await _client.generate(prompt)
     except Exception as exc:
-        logger.error("Synthesis LLM call failed: %s", exc)
+        logger.error("LLM call failed: %s", exc)
         answer = (
             "I was unable to generate a response at this time. "
             f"Found {len(results)} relevant posts."
         )
+        return {
+            "answer": answer,
+            "reasoning": f"Route: {state.get('route', 'unknown')} | Results: {len(results)} | Error: {str(exc)}",
+        }
+
+    # Step 4: Restore tokens in the answer
+    restored_answer = _privatizer.restore(answer)
 
     return {
-        "answer": answer,
+        "answer": restored_answer,
         "reasoning": f"Route: {state.get('route', 'unknown')} | Results: {len(results)}",
     }
