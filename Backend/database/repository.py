@@ -53,12 +53,11 @@ _GET_BY_IDS = f"""
     {_RETURN_POST_FIELDS}
 """
 
+# NOTE: `_KEYWORD_SEARCH` requires the Neo4j fulltext index "post_fulltext",
+# which is created in `vector_store.py`; if the index is missing, this query
+# will fail at runtime.
 _KEYWORD_SEARCH = f"""
-    MATCH (p:Post)
-    WHERE toLower(p.content)          CONTAINS toLower($search_term)
-       OR toLower(p.tags_json)        CONTAINS toLower($search_term)
-       OR toLower(p.account_username) CONTAINS toLower($search_term)
-       OR toLower(p.account_acct)     CONTAINS toLower($search_term)
+    CALL db.index.fulltext.queryNodes("post_fulltext", $search_term) YIELD node AS p, score
     {_RETURN_POST_FIELDS}
     LIMIT $limit
 """

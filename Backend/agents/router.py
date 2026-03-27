@@ -3,11 +3,11 @@ from __future__ import annotations
 import logging
 
 from .state import AgentState
-from ..llm.llm_provider import get_llm_provider
+from ..llm.llm_provider import get_node_llm_provider
 from ..llm.prompts import ROUTER_PROMPT
 
 logger = logging.getLogger(__name__)
-_client = get_llm_provider()
+_client = get_node_llm_provider("router")
 
 
 async def router_node(state: AgentState) -> dict:
@@ -17,9 +17,29 @@ async def router_node(state: AgentState) -> dict:
     complexity = state.get("complexity", "simple")
     intent = state.get("intent", "open_ended")
     sub_queries = state.get("sub_queries", [])
+    requires_graph = bool(state.get("requires_graph_traversal", False))
+    analytics_kind = state.get("analytics_kind", "none")
 
     ADVANCED_INTENTS = {"trend_analysis",
                         "comparison", "open_ended", "summary"}
+
+    if requires_graph:
+        route = "analytics"
+        logger.info(
+            "Router decision: %s (requires_graph=%s, analytics_kind=%s, intent=%s, complexity=%s)",
+            route,
+            requires_graph,
+            analytics_kind,
+            intent,
+            complexity,
+        )
+        return {"route": route}
+
+    if intent == "analytics":
+        route = "analytics"
+        logger.info("Router decision: %s (intent=%s, complexity=%s)",
+                    route, intent, complexity)
+        return {"route": route}
 
     # Deterministic routing based on query analysis
     if complexity == "complex" or intent in ADVANCED_INTENTS or len(sub_queries) > 0:
