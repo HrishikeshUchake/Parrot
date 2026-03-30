@@ -42,9 +42,7 @@ def _init_privatizer():
         return NoOpPrivatizer()
 
 
-_client = _init_llm_client()
 _privatizer = _init_privatizer()
-
 _client = get_llm_provider()
 
 

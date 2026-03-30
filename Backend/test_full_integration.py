@@ -32,15 +32,11 @@ async def test_full_integration():
     llm_client = OpenRouterClient()
 
     # Sample context with PII (like what synthesis.py would get)
-    original_context = """[Status #123] Score=0.85 | @alice.smith | reblogs=5  favs=10  replies=2
-Tags=['privacy', 'security']
-Content: Hi, I'm Alice Johnson. Contact me at alice.johnson@company.com or 555-123-4567.
+    original_context = """ Hi, I'm Alice Johnson. Contact me at alice.johnson@company.com or 555-123-4567.
 Dont forget to reach me at alice.johnson@company.com
 ---
 
-[Status #456] Score=0.72 | @bob.jones | reblogs=3  favs=7  replies=1
-Tags=['data', 'security']
-Content: For questions, email bob.smith@company.com"""
+ For questions, email bob.smith@company.com"""
 
     print("STEP 1: ORIGINAL CONTEXT (with PII)")
     print("-" * 70)
