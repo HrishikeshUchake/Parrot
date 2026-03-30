@@ -4,17 +4,22 @@ import logging
 
 from .state import AgentState
 from ..database.models import SearchResult
+<<<<<<< HEAD
 
 # from ..llm.ollama_client import OllamaClient
 # from ..llm.openrouter_client import OpenRouterClient
 # =======
 from ..llm.llm_provider import get_llm_provider
 
+=======
+from ..llm.llm_provider import get_node_llm_provider
+>>>>>>> 4870f7e9a9998b5865ec1df345cf9f948541bda7
 from ..llm.prompts import SYNTHESIS_PROMPT
 from ..services.privacy import PresidioPrivatizer, NoOpPrivatizer
 from ..config import settings
 
 logger = logging.getLogger(__name__)
+<<<<<<< HEAD
 
 
 # Initialize LLM client based on configuration
@@ -44,6 +49,9 @@ def _init_privatizer():
 
 _privatizer = _init_privatizer()
 _client = get_llm_provider()
+=======
+_client = get_node_llm_provider("synthesis")
+>>>>>>> 4870f7e9a9998b5865ec1df345cf9f948541bda7
 
 
 def _post_label(p) -> str:
@@ -76,6 +84,9 @@ def _result_label(r: SearchResult) -> str:
         text = (text[:80].rsplit(None, 1)[0] +
                 "...") if len(text) > 80 else text
         return f'Comment "{text}" by @{commenter} on Post {post_id}'
+    if r.result_type == "thread" and r.thread is not None:
+        parts = ", ".join(r.thread.participants)
+        return f'Conversation thread involving {parts}'
     return f'{r.result_type} #{r.item_id}'
 
 
@@ -101,6 +112,24 @@ def _format_context(results: list[SearchResult]) -> str:
             )
             continue
 
+        if r.result_type == "thread" and r.thread is not None:
+            t = r.thread
+            # Combine the overall summary with the detailed raw messages for full context
+            snippet = f"--- Thread Summary ---\n{t.summary}\n\n--- Thread Messages ---\n"
+            for m in t.messages:
+                author_name = m.get('author', m.get('sender', 'unknown'))
+                time_str = m.get('time', '')
+                content_str = m.get('content', m.get('text', ''))
+                snippet += f" [{time_str}] {author_name}: {content_str}\n"
+            # Threads can be quite large, allow larger snippet context
+            snippet = snippet[:1500] + ("..." if len(snippet) > 1500 else "")
+            lines.append(
+                f"[{_result_label(r)}] Score={r.score:.2f} | type=thread\n"
+                f"Participants={t.participants}\n"
+                f"Context:\n{snippet}"
+            )
+            continue
+
         snippet = r.content[:400] + ("..." if len(r.content) > 400 else "")
         lines.append(
             f"[{_result_label(r)}] Score={r.score:.2f} | type={r.result_type}\n"
@@ -110,7 +139,70 @@ def _format_context(results: list[SearchResult]) -> str:
     return "\n---\n".join(lines)
 
 
+def _render_analytics_answer(payload: dict) -> str:
+    summary = str(payload.get("summary", "")).strip()
+    if not summary:
+        summary = "Analytics computed from graph traversal."
+
+    kind = payload.get("kind", "aggregate")
+    metrics = payload.get("metrics", {})
+    lines = [summary]
+
+    if kind == "trend":
+        window = payload.get("time_window", {})
+        start = window.get("start", "")
+        end = window.get("end", "")
+        bucket_days = window.get("bucket_days", "")
+        if start and end:
+            lines.append(
+                f"Window: {start[:10]} to {end[:10]} (bucket={bucket_days}d)")
+
+        totals = metrics.get("totals", {})
+        if totals:
+            lines.append(
+                "Totals: "
+                f"posts={totals.get('posts', 0)}, "
+                f"messages={totals.get('messages', 0)}, "
+                f"comments={totals.get('comments', 0)}, "
+                f"all_activity={totals.get('total', 0)}"
+            )
+
+        series = metrics.get("time_series", [])
+        if series:
+            preview = series[-3:]
+            preview_text = ", ".join(
+                f"{row.get('bucket_start', row.get('day', ''))}->{row.get('bucket_end', row.get('day', ''))}: {row.get('total', 0)}"
+                for row in preview
+            )
+            lines.append(f"Recent buckets: {preview_text}")
+    else:
+        for key in ("partners", "topics", "engagers", "themes"):
+            rows = metrics.get(key)
+            if not rows:
+                continue
+            preview = ", ".join(
+                f"{item.get('name', '')} ({item.get('count', 0)})" for item in rows[:5]
+            )
+            lines.append(f"Top {key}: {preview}")
+
+    return "\n".join(lines)
+
+
+def _with_user_perspective_context(context: str, username: str | None) -> str:
+    """Add user-perspective guidance to synthesis context when username is available."""
+    if not username:
+        return context
+    preface = (
+        "Assume you are answering on behalf of the user or analyzing the data "
+        "for the user. The primary user asking the question is '@"
+        f"{username}'. When referring to 'my' or 'I' in the query, it means "
+        f"@{username}."
+    )
+    return f"{preface}\n\n{context}"
+
+
 async def synthesis_node(state: AgentState) -> dict:
+<<<<<<< HEAD
     """Generate a final answer grounded in retrieved documents with privacy protection.
 
     Flow:
@@ -136,6 +228,42 @@ async def synthesis_node(state: AgentState) -> dict:
         query=state["query"],
         context=anonymized_context
     )
+=======
+    """Generate a final answer grounded in retrieved documents."""
+    analytics_payload = state.get("analytics_payload")
+    if analytics_payload:
+        answer = _render_analytics_answer(analytics_payload)
+        return {
+            "answer": answer,
+            "reasoning": (
+                f"Route: {state.get('route', 'unknown')} | "
+                "Source: graph_analytics_payload"
+            ),
+        }
+
+    # Preserve deterministic retrieval direct answers (e.g. meta/count paths).
+    # Retrieval sets `answer` directly and can intentionally return no sources.
+    # In that case, avoid LLM synthesis overwriting a known-correct answer.
+    existing_answer = (state.get("answer") or "").strip()
+    if existing_answer and not state.get("search_results"):
+        return {
+            "answer": existing_answer,
+            "reasoning": (
+                f"Route: {state.get('route', 'unknown')} | "
+                "Source: retrieval_direct_answer"
+            ),
+        }
+
+    results = state.get("search_results", [])
+    context = _format_context(results)
+
+    context = _with_user_perspective_context(
+        context,
+        state.get("user_context_username"),
+    )
+
+    prompt = SYNTHESIS_PROMPT.format(query=state["query"], context=context)
+>>>>>>> 4870f7e9a9998b5865ec1df345cf9f948541bda7
 
     try:
         # Step 3: Call LLM with anonymized content

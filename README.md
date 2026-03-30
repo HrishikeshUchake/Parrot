@@ -1,93 +1,337 @@
-# ug_fs_1
+# Parrot: Agentic Graph-RAG for Social Data Analysis
 
+Parrot is a backend-first system for retrieving and synthesizing answers from social-style data (posts, comments, and messages) using a graph-enhanced Retrieval-Augmented Generation (RAG) pipeline.
 
+The system combines:
 
-## Getting started
+- LangGraph orchestration for multi-step agent flows
+- Neo4j as graph store plus native vector indexes
+- SentenceTransformer embeddings (E5 family)
+- Node-specific LLM routing (analyzer/router/synthesis can use different backends)
+- Ollama (local LLM) with optional OpenAI-compatible synthesis path
+- FastAPI for API serving and a built-in CLI for local workflows
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+## Current Project Status
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+This repository is in active prototype-to-product hardening.
 
-## Add your files
+What is production-relevant today:
 
-* [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+- End-to-end query flow from analysis to routing to retrieval to synthesis
+- Mixed-source retrieval over posts, comments, and messages
+- User-scoped import pipeline from JSONL datasets
+- Neo4j graph-neighbor enrichment in advanced retrieval
 
+What is still maturing:
+
+- Frontend implementation (currently scaffold only)
+- Automated tests and CI workflows
+- Expanded operational hardening and security guardrails
+
+## Repository Layout
+
+```text
+Backend/
+  agents/       # LangGraph nodes: analyzer, router, retrieval, synthesis
+  database/     # Data models + Neo4j/SQLite repositories
+  llm/          # Provider abstraction, Ollama client, prompts
+  scripts/      # Import, inspection, and embedding migration tools
+  services/     # Embeddings, hybrid search, vector store
+  config.py     # Runtime configuration via pydantic-settings
+  main.py       # FastAPI app + CLI entrypoint
+
+Frontend/       # UI scaffold (placeholder)
+Documents/      # Documentation scaffold (placeholder)
+
+activities.jsonl
+feed.jsonl
+messages.jsonl
 ```
-cd existing_repo
-git remote add origin https://git.las.iastate.edu/SeniorDesignComS/2026spr/402c/ug_fs_1.git
-git branch -M main
-git push -uf origin main
+
+## Architecture Overview
+
+### Query Lifecycle
+
+1. Input enters via API (`POST /query`) or interactive CLI.
+2. `query_analyzer` classifies intent and extracts filters and sub-queries.
+3. `router` chooses simple or advanced retrieval.
+4. Retrieval executes hybrid vector plus keyword logic, with optional user scoping.
+5. Advanced path expands via graph-neighbor traversal.
+6. `synthesis` composes final answer grounded in retrieved evidence.
+
+### Graph Topology
+
+```text
+query_analyzer -> router -> {simple_retrieval | advanced_retrieval} -> synthesis -> END
 ```
 
-## Integrate with your tools
+### Retrieval Strategy
 
-* [Set up project integrations](https://git.las.iastate.edu/SeniorDesignComS/2026spr/402c/ug_fs_1/-/settings/integrations)
+Simple retrieval:
 
-## Collaborate with your team
+- Single-query hybrid search
+- Optional user-scoped semantic matches from messages and comments
+- Fast path for straightforward factual lookups
 
-* [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+Advanced retrieval:
 
-## Test and Deploy
+- Multi-query retrieval from decomposed sub-queries
+- Deduplicate and rerank by score
+- Graph-neighbor expansion over related posts
+- Better for trend, comparison, and synthesis-style questions
 
-Use the built-in continuous integration in GitLab.
+## Core Components
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+- API and CLI entrypoint: `Backend/main.py`
+- Workflow graph: `Backend/agents/graph.py`
+- Query analyzer: `Backend/agents/query_analyzer.py`
+- Router: `Backend/agents/router.py`
+- Retrieval nodes: `Backend/agents/retrieval.py`
+- Final synthesis: `Backend/agents/synthesis.py`
+- Vector store and graph operations: `Backend/services/vector_store.py`
+- Hybrid search engine: `Backend/services/search_engine.py`
+- Embedding service: `Backend/services/embedding_service.py`
+- Config and defaults: `Backend/config.py`
 
-***
+## Technology Stack
 
-# Editing this README
+- Python 3.11+
+- LangGraph and LangChain
+- Neo4j (graph + vector indexes)
+- sentence-transformers and torch
+- FastAPI and Uvicorn
+- Ollama (primary local inference)
+- Optional OpenAI-compatible backend
+- SQLite (query cache sidecar)
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+## Prerequisites
 
-## Suggestions for a good README
+1. Python environment (virtualenv recommended)
+2. Running Neo4j instance reachable at your configured URI
+3. Running Ollama instance with desired model pulled (default `llama3.2`)
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+## Quick Start
 
-## Name
-Choose a self-explaining name for your project.
+### 1) Create and activate a virtual environment
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+### 2) Install backend dependencies
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+```bash
+pip install -r Backend/requirements.txt
+```
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+### 3) Configure environment
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+The backend reads settings from environment variables and `Backend/.env`.
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+Minimum recommended values:
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+```env
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=your_password
+NEO4J_DATABASE=neo4j
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+LLM_BACKEND=ollama
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.2
+OPENAI_MODEL=gpt-4o-mini
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+EMBEDDING_MODEL=intfloat/e5-large-v2
+```
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+### Optional: Synthesis-only remote reasoning
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+If you want query analysis and routing to stay local while only the final synthesis answer uses a remote model, configure:
 
-## License
-For open source projects, say how it is licensed.
+```env
+ANALYZER_LLM_BACKEND=ollama
+ROUTER_LLM_BACKEND=ollama
+SYNTHESIS_LLM_BACKEND=openai
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+OPENAI_API_KEY=your_api_key
+OPENAI_MODEL=gpt-4o-mini
+# Optional for OpenAI-compatible gateways:
+# OPENAI_BASE_URL=https://your-endpoint/v1
+```
+
+Behavior summary:
+
+- `query_analyzer` uses `ANALYZER_LLM_BACKEND`
+- `router` uses `ROUTER_LLM_BACKEND`
+- `synthesis` uses `SYNTHESIS_LLM_BACKEND`
+- If remote synthesis fails, the provider falls back to local Ollama
+
+### 4) Fetch Data
+
+```bash
+python -m Backend.scripts.fetch_user_data --username <your-username>
+```
+
+### 5) Run API server
+
+```bash
+uvicorn Backend.main:app --reload --port 8000
+```
+
+### 6) Run CLI mode
+
+```bash
+python -m Backend.main --username <your-username>
+```
+
+## API Usage
+
+### Health Check
+
+```http
+GET /health
+```
+
+Example response:
+
+```json
+{
+  "status": "ok",
+  "ollama": true
+}
+```
+
+### Query Endpoint
+
+```http
+POST /query
+Content-Type: application/json
+```
+
+Request body:
+
+```json
+{
+  "query": "What topics did @alice discuss last week?",
+  "user_context_username": "alice"
+}
+```
+
+Response body:
+
+```json
+{
+  "answer": "...",
+  "route": "advanced",
+  "num_sources": 8,
+  "reasoning": "Route: advanced | Results: 8"
+}
+```
+
+## Data Ingestion Workflows
+
+Parrot supports user-centric import from local JSONL files.
+
+### Import user data through the main entrypoint
+
+```bash
+python -m Backend.main \
+  --load-user-data \
+  --username albert336 \
+  --activities activities.jsonl \
+  --feed feed.jsonl \
+  --messages messages.jsonl
+```
+
+### Standalone import script
+
+```bash
+python -m Backend.scripts.fetch_user_data \
+  --username albert336 \
+  --activities activities.jsonl \
+  --feed feed.jsonl \
+  --messages messages.jsonl
+```
+
+### Inspect Neo4j contents
+
+```bash
+python -m Backend.scripts.inspect_neo4j
+```
+
+### Recompute embeddings for existing nodes
+
+```bash
+python -m Backend.scripts.migrate_embeddings --batch-size 128
+```
+
+## Configuration Reference
+
+The following areas are configured in `Backend/config.py`:
+
+- Neo4j connection and index names
+- Embedding model and batch/cache behavior
+- Global and node-specific LLM backend selection and generation settings
+- Retrieval defaults (`top_k`, thresholds)
+- Import batch sizes and mastodon-source options
+
+Commonly tuned settings:
+
+- `DEFAULT_TOP_K`
+- `ADVANCED_TOP_K`
+- `SIMILARITY_THRESHOLD`
+- `LLM_TEMPERATURE`
+- `LLM_MAX_TOKENS`
+- `ANALYZER_LLM_BACKEND`
+- `ROUTER_LLM_BACKEND`
+- `SYNTHESIS_LLM_BACKEND`
+- `OPENAI_MODEL`
+- `USER_DATA_IMPORT_BATCH_SIZE`
+
+## Operational Notes
+
+- Startup may be heavy on first run because embedding model initialization and Neo4j index checks occur during component initialization.
+- Advanced retrieval quality depends strongly on embedding quality and graph completeness.
+- User scoping is supported through `user_context_username` and metadata filters.
+
+## Security and Privacy Considerations
+
+Current implementation notes:
+
+- Data is persisted in Neo4j for retrieval.
+- User-scoped relationships (`CAN_SEE`) are used for contextual scoping.
+- You should enforce strict environment-based secret management and avoid default credentials in any shared environment.
+
+Recommended hardening for deployment:
+
+- Move all credentials to secure secret stores
+- Add request validation and rate limiting at API boundary
+- Add structured audit logging for retrieval and synthesis decisions
+- Add test coverage for privacy scoping rules
+
+## Development and Contribution
+
+### Local development checklist
+
+1. Start Neo4j and Ollama
+2. Activate virtual environment
+3. Install dependencies
+4. Ingest seed and user data
+5. Run API or CLI and iterate on prompts and agents
+
+### Suggested quality gates
+
+- Unit tests for analyzer, router, and retrieval logic
+- Integration tests for API plus Neo4j plus Ollama contract
+- Regression tests for user-scoped retrieval filters
+
+## Known Gaps and Roadmap
+
+Near-term priorities:
+
+- Implement frontend experience in `Frontend/`
+- Add robust automated tests
+- Add CI workflows under `.github/`
+- Improve observability and error surfaces
+- Expand project documentation in `Documents/`

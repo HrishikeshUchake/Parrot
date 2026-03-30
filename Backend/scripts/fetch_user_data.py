@@ -21,8 +21,10 @@ python -m Backend.scripts.fetch_user_data \
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import logging
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,6 +33,7 @@ from typing import Any
 from Backend.config import settings
 from Backend.services.embedding_service import EmbeddingService
 from Backend.services.vector_store import VectorStore
+from Backend.services.chunking_service import ChunkingService
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +43,8 @@ class ImportStats:
     posts: int = 0
     messages: int = 0
     comments: int = 0
+    threads: int = 0
+    chunks: int = 0
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -197,7 +202,7 @@ def _chunks(items: list[dict[str, Any]], size: int) -> list[list[dict[str, Any]]
     return [items[i:i + size] for i in range(0, len(items), size)]
 
 
-def import_user_data(
+async def import_user_data(
     username: str,
     activities_path: Path,
     feed_path: Path,
@@ -229,8 +234,10 @@ def import_user_data(
 
     svc = EmbeddingService()
     store = VectorStore()
+    chunker = ChunkingService()
     batch_size = settings.user_data_import_batch_size
 
+    # 1. Original upserts (backward compatibility)
     for post_chunk in _chunks(post_records, batch_size):
         _embed_field(post_chunk, "content", svc)
         store.batch_upsert_user_data(
@@ -258,17 +265,71 @@ def import_user_data(
             username=username,
         )
 
+    # 2. Derive Conversation Threads
+    comments_by_post = defaultdict(list)
+    for c in comment_records:
+        comments_by_post[c["post_id"]].append(c)
+
+    all_threads = []
+    all_chunks = []
+
+    concurrency = max(1, batch_size)
+
+    post_coroutines = [
+        chunker.process_post_with_comments(post, comments_by_post[post["id"]])
+        for post in post_records
+    ]
+    for i in range(0, len(post_coroutines), concurrency):
+        batch_results = await asyncio.gather(
+            *post_coroutines[i:i + concurrency]
+        )
+        for thread, chunks in batch_results:
+            all_threads.append(thread)
+            all_chunks.extend(chunks)
+
+    # Group messages by DM conversation
+    dm_conversations = defaultdict(list)
+    for m in message_records:
+        pair = tuple(sorted([m["sender_name"], m["receiver_name"]]))
+        dm_conversations[pair].append(m)
+
+    dm_coroutines = [
+        chunker.process_dm_thread(f"{pair[0]}_{pair[1]}", msgs)
+        for pair, msgs in dm_conversations.items()
+    ]
+    for i in range(0, len(dm_coroutines), concurrency):
+        batch_results = await asyncio.gather(
+            *dm_coroutines[i:i + concurrency]
+        )
+        for thread, chunks in batch_results:
+            all_threads.append(thread)
+            all_chunks.extend(chunks)
+
+    # 3. Store thread structure
+    for thread in all_threads:
+        store.upsert_thread(thread.model_dump(), username)
+
+    # 4. Embed and store thread chunks
+    chunk_dicts = [c.model_dump() for c in all_chunks]
+    for c_chunk in _chunks(chunk_dicts, batch_size):
+        _embed_field(c_chunk, "content", svc)
+        store.upsert_thread_chunks(c_chunk, username)
+
     stats = ImportStats(
         posts=len(post_records),
         messages=len(message_records),
         comments=len(comment_records),
+        threads=len(all_threads),
+        chunks=len(all_chunks),
     )
     logger.info(
-        "Imported user data for '%s' -> posts=%d messages=%d comments=%d",
+        "Imported user data for '%s' -> posts=%d messages=%d comments=%d threads=%d chunks=%d",
         username,
         stats.posts,
         stats.messages,
         stats.comments,
+        stats.threads,
+        stats.chunks,
     )
     return stats
 
@@ -302,12 +363,12 @@ def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
 
-    stats = import_user_data(
+    stats = asyncio.run(import_user_data(
         username=args.username,
         activities_path=Path(args.activities),
         feed_path=Path(args.feed),
         messages_path=Path(args.messages),
-    )
+    ))
 
     print(
         f"Imported for {args.username}: "

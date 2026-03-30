@@ -15,6 +15,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Suppress Neo4j driver schema warnings for missing nodes/properties
+logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
+
 
 # ── FastAPI application ───────────────────────────────────────────────────────────
 try:
@@ -130,12 +133,12 @@ def _run_import_if_requested(args: argparse.Namespace) -> bool:
     from pathlib import Path
     from .scripts.fetch_user_data import import_user_data
 
-    stats = import_user_data(
+    stats = asyncio.run(import_user_data(
         username=args.username,
         activities_path=Path(args.activities),
         feed_path=Path(args.feed),
         messages_path=Path(args.messages),
-    )
+    ))
     print(
         f"Imported for {args.username}: "
         f"{stats.posts} posts, {stats.comments} comments, {stats.messages} messages"

@@ -6,9 +6,9 @@ Graph topology:
     query_analyzer
           |
        router
-     /        \
-  simple    advanced
-     \        /
+    /    |      \
+simple analytics advanced
+    \     |      /
       synthesis
           |
          END
@@ -19,7 +19,11 @@ from langgraph.graph import StateGraph, END
 from .state import AgentState
 from .query_analyzer import query_analyzer_node
 from .router import router_node, route_decision
-from .retrieval import simple_retrieval_node, advanced_retrieval_node
+from .retrieval import (
+    simple_retrieval_node,
+    advanced_retrieval_node,
+    analytics_retrieval_node,
+)
 from .synthesis import synthesis_node
 
 
@@ -30,6 +34,7 @@ def build_graph() -> StateGraph:
     graph.add_node("query_analyzer", query_analyzer_node)
     graph.add_node("router", router_node)
     graph.add_node("simple_retrieval", simple_retrieval_node)
+    graph.add_node("analytics_retrieval", analytics_retrieval_node)
     graph.add_node("advanced_retrieval", advanced_retrieval_node)
     graph.add_node("synthesis", synthesis_node)
 
@@ -45,12 +50,14 @@ def build_graph() -> StateGraph:
         route_decision,
         {
             "simple": "simple_retrieval",
+            "analytics": "analytics_retrieval",
             "advanced": "advanced_retrieval",
         },
     )
 
     # Merge back to synthesis
     graph.add_edge("simple_retrieval", "synthesis")
+    graph.add_edge("analytics_retrieval", "synthesis")
     graph.add_edge("advanced_retrieval", "synthesis")
     graph.add_edge("synthesis", END)
 

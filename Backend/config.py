@@ -2,8 +2,12 @@
 Central configuration for the Parrot Agentic RAG system.
 All settings are read from environment variables with sensible defaults.
 """
+import logging
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
+
+# Suppress Neo4j driver schema warnings for missing nodes/properties natively handled gracefully
+logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
 
 BASE_DIR = Path(__file__).parent
 
@@ -24,6 +28,7 @@ class Settings(BaseSettings):
     neo4j_embedding_dim: int = 1024          # intfloat/e5-large-v2 output dim
     neo4j_message_vector_index: str = "message_embeddings"
     neo4j_comment_vector_index: str = "comment_embeddings"
+    neo4j_thread_chunk_vector_index: str = "thread_chunk_embeddings"
 
     # --- Embedding model ---
     embedding_model: str = "intfloat/e5-large-v2"
@@ -32,8 +37,12 @@ class Settings(BaseSettings):
 
     # --- Ollama / LLM ---
     llm_backend: str = "ollama"              # ollama or openai
+    analyzer_llm_backend: str = "ollama"     # query analyzer node backend
+    router_llm_backend: str = "ollama"       # router node backend
+    synthesis_llm_backend: str = "ollama"    # synthesis node backend
     openai_api_key: str = ""
     openai_base_url: str = ""
+    openai_model: str = "gpt-4o-mini"
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2"           # model tag pulled in Ollama
 
@@ -59,6 +68,9 @@ class Settings(BaseSettings):
     default_top_k: int = 5
     advanced_top_k: int = 15
     similarity_threshold: float = 0.40       # cosine similarity floor
+    analytics_default_trend_days: int = 90
+    analytics_bucket_days: int = 7
+    analytics_top_entities: int = 10
 
     # --- Query cache (SQLite table) ---
     cache_ttl_seconds: int = 3600

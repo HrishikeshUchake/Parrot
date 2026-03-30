@@ -17,7 +17,7 @@ class OpenAIProvider:
     def __init__(self):
         self.api_key = settings.openai_api_key
         self.base_url = settings.openai_base_url
-        self.model = settings.ollama_model  # Reuse or add new config
+        self.model = settings.openai_model
         self._client = AsyncClient(timeout=Timeout(15.0))
         self._fallback = OllamaClient()
 
@@ -55,3 +55,24 @@ def get_llm_provider() -> LLMProvider:
     if settings.llm_backend.lower() == "openai":
         return OpenAIProvider()
     return OllamaClient()
+
+
+def get_llm_provider_for_backend(backend: str | None = None) -> LLMProvider:
+    """Return provider for a specific backend, defaulting to global setting."""
+    selected = (backend or settings.llm_backend).strip().lower()
+    if selected == "openai":
+        return OpenAIProvider()
+    return OllamaClient()
+
+
+def get_node_llm_provider(node_name: str) -> LLMProvider:
+    """Return provider for a node-specific backend setting."""
+    node_key = (node_name or "").strip().lower()
+    backend_map = {
+        "query_analyzer": settings.analyzer_llm_backend,
+        "analyzer": settings.analyzer_llm_backend,
+        "router": settings.router_llm_backend,
+        "synthesis": settings.synthesis_llm_backend,
+    }
+    backend = backend_map.get(node_key, settings.llm_backend)
+    return get_llm_provider_for_backend(backend)

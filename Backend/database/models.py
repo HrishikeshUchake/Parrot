@@ -54,10 +54,31 @@ class UserComment(BaseModel):
     user_context_username: str = ""
 
 
+class ConversationThread(BaseModel):
+    """Represents a full conversation thread (e.g. parent post + replies, or group chat)."""
+    id: str
+    source_type: Literal["post", "message"]
+    participants: list[str] = Field(default_factory=list)
+    messages: list[dict] = Field(default_factory=list)  # structured messages
+    summary: str = ""  # AI-generated summary of the thread
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class ThreadChunk(BaseModel):
+    """Represents a smaller chunk of a conversation thread, indexed for retrieval."""
+    id: str
+    thread_id: str
+    content: str  # Either a chunk of raw messages or the thread summary
+    chunk_index: int = 0
+    is_summary: bool = False
+
+
 class SearchResult(BaseModel):
     # For legacy post-only paths, `post` remains populated.
     post: Post | None = None
-    result_type: Literal["post", "comment", "message"] = "post"
+    thread: ConversationThread | None = None
+    result_type: Literal["post", "comment", "message", "thread"] = "post"
     item_id: str = ""
     content: str = ""
     metadata: dict = Field(default_factory=dict)
