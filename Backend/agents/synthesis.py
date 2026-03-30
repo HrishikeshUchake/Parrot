@@ -4,16 +4,12 @@ import logging
 
 from .state import AgentState
 from ..database.models import SearchResult
-<<<<<<< HEAD
 
 # from ..llm.ollama_client import OllamaClient
 # from ..llm.openrouter_client import OpenRouterClient
 # =======
 from ..llm.llm_provider import get_llm_provider
 
-=======
-from ..llm.llm_provider import get_node_llm_provider
->>>>>>> 4870f7e9a9998b5865ec1df345cf9f948541bda7
 from ..llm.prompts import SYNTHESIS_PROMPT
 from ..services.privacy import PresidioPrivatizer, NoOpPrivatizer
 from ..config import settings
