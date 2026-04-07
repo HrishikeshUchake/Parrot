@@ -26,7 +26,37 @@ try:
     from .agents.graph import rag_graph
     from .llm.ollama_client import OllamaClient
 
-    app = FastAPI(title="Parrot RAG API", version="0.1.0")
+    import contextlib
+    import httpx
+
+    @contextlib.asynccontextmanager
+    async def lifespan(application: FastAPI):
+        # On startup: pull all activities from personal_assistant and sync to Neo4j
+        personal_assistant_url = os.environ.get(
+            "PERSONAL_ASSISTANT_URL", "http://localhost:5002"
+        )
+        username = os.environ.get("GRAPHRAG_USERNAME", "")
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(
+                    f"{personal_assistant_url}/all_activities"
+                )
+                if resp.status_code == 200:
+                    activities = resp.json()
+                    if activities:
+                        logger.info(
+                            "Startup sync: %d activities from personal_assistant.",
+                            len(activities),
+                        )
+                        await ingest_activities(
+                            IngestRequest(username=username, activities=activities)
+                        )
+        except Exception as exc:
+            logger.warning("Startup sync failed (personal_assistant not ready?): %s", exc)
+        yield
+
+    import os
+    app = FastAPI(title="Parrot RAG API", version="0.1.0", lifespan=lifespan)
 
     class QueryRequest(BaseModel):
         query: str
@@ -37,6 +67,95 @@ try:
         route: str
         num_sources: int
         reasoning: str
+
+    class IngestRequest(BaseModel):
+        username: str
+        activities: list[dict]
+
+    class IngestResponse(BaseModel):
+        status: str
+        ingested: int
+
+    @app.post("/ingest_activities", response_model=IngestResponse)
+    async def ingest_activities(req: IngestRequest) -> IngestResponse:
+        import uuid
+        from .services.embedding_service import EmbeddingService
+        from .services.vector_store import VectorStore
+
+        svc = EmbeddingService()
+        store = VectorStore()
+
+        posts = []
+        messages = []
+
+        for act in req.activities:
+            source = act.get("source", "")
+
+            if source == "individual_chat":
+                text = (act.get("text") or "").replace("TEXT:\n", "").strip()
+                if not text:
+                    continue
+                ts = int(act.get("time") or 0)
+                sender = act.get("sender_name", "")
+                receiver = act.get("receiver_name", "")
+                messages.append({
+                    "id": f"msg:{ts}:{sender}:{receiver}",
+                    "sender_name": sender,
+                    "receiver_name": receiver,
+                    "text": text,
+                    "date": act.get("date") or "",
+                    "time_ms": ts,
+                    "source": source,
+                })
+            else:
+                text = (
+                    act.get("text_content")
+                    or act.get("abs")
+                    or act.get("text")
+                    or act.get("content")
+                    or ""
+                ).replace("TEXT:\n", "").strip()
+                if not text:
+                    continue
+                title = act.get("title") or ""
+                content = f"{title}\n{text}".strip() if title else text
+                raw_tags = act.get("tag_list") or act.get("tags") or []
+                if isinstance(raw_tags, str):
+                    raw_tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
+                posts.append({
+                    "id": str(act.get("post_id") or act.get("id") or uuid.uuid4()),
+                    "content": content,
+                    "created_at": act.get("date") or act.get("created_at") or "",
+                    "account_id": str(act.get("author_id") or req.username),
+                    "account_username": act.get("author_name") or req.username,
+                    "account_acct": act.get("author_name") or req.username,
+                    "tags": raw_tags,
+                    "reblogs_count": 0,
+                    "favourites_count": len(act.get("liker_names") or []),
+                    "replies_count": len(act.get("comments") or []),
+                    "url": act.get("url") or "",
+                    "visibility": "private",
+                    "language": act.get("language") or "",
+                    "source": source or "asmoment",
+                    "title": title,
+                })
+
+        if posts:
+            embeddings = svc.encode_batch([p["content"] for p in posts])
+            for post, emb in zip(posts, embeddings):
+                post["embedding"] = emb
+
+        if messages:
+            embeddings = svc.encode_batch([m["text"] for m in messages])
+            for msg, emb in zip(messages, embeddings):
+                msg["embedding"] = emb
+
+        if posts or messages:
+            store.batch_upsert_user_data(
+                posts=posts, messages=messages, comments=[], username=req.username
+            )
+
+        return IngestResponse(status="ok", ingested=len(posts) + len(messages))
 
     @app.post("/query", response_model=QueryResponse)
     async def query_endpoint(req: QueryRequest) -> QueryResponse:
