@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import Protocol
 
 from httpx import AsyncClient, Timeout
@@ -74,5 +75,19 @@ def get_node_llm_provider(node_name: str) -> LLMProvider:
         "router": settings.router_llm_backend,
         "synthesis": settings.synthesis_llm_backend,
     }
+    env_var_map = {
+        "query_analyzer": "ANALYZER_LLM_BACKEND",
+        "analyzer": "ANALYZER_LLM_BACKEND",
+        "router": "ROUTER_LLM_BACKEND",
+        "synthesis": "SYNTHESIS_LLM_BACKEND",
+    }
+
     backend = backend_map.get(node_key, settings.llm_backend)
+
+    # If a node-specific backend wasn't explicitly set in environment,
+    # inherit the global backend to avoid surprising defaults.
+    node_env_var = env_var_map.get(node_key)
+    if node_env_var and not os.getenv(node_env_var):
+        backend = settings.llm_backend
+
     return get_llm_provider_for_backend(backend)

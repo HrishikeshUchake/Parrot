@@ -1,53 +1,17 @@
-"""Synthesis node generates final answer with citations using LLM + Privacy."""
+"""Synthesis node generates final answer with citations using Llama."""
 from __future__ import annotations
 import logging
 
 from .state import AgentState
 from ..database.models import SearchResult
-
-# from ..llm.ollama_client import OllamaClient
-# from ..llm.openrouter_client import OpenRouterClient
-# =======
-from ..llm.llm_provider import get_llm_provider
-
-from ..llm.prompts import SYNTHESIS_PROMPT
-from ..services.privacy import PresidioPrivatizer, NoOpPrivatizer
 from ..config import settings
+from ..llm.llm_provider import get_node_llm_provider
+from ..llm.prompts import SYNTHESIS_PROMPT
+from ..llm.remote_prompts import REMOTE_SYNTHESIS_PROMPT
+from .synthesis_privacy import privatize_context, restore_text, log_privacy_debug
 
 logger = logging.getLogger(__name__)
-<<<<<<< HEAD
-
-
-# Initialize LLM client based on configuration
-# def _init_llm_client():
-#     """Initialize the appropriate LLM client (Ollama or OpenRouter)."""
-#     if settings.llm_provider.lower() == "openrouter":
-#         return OpenRouterClient()
-#     else:
-#         return OllamaClient()
-
-
-# Initialize privacy layer
-def _init_privatizer():
-    """Initialize the appropriate privatizer (Presidio or NoOp)."""
-    if not settings.privacy_enabled:
-        return NoOpPrivatizer()
-
-    if settings.privacy_anonymizer.lower() == "presidio":
-        try:
-            return PresidioPrivatizer()
-        except ImportError:
-            logger.warning("Presidio not available, using NoOp privatizer")
-            return NoOpPrivatizer()
-    else:
-        return NoOpPrivatizer()
-
-
-_privatizer = _init_privatizer()
-_client = get_llm_provider()
-=======
 _client = get_node_llm_provider("synthesis")
->>>>>>> 4870f7e9a9998b5865ec1df345cf9f948541bda7
 
 
 def _post_label(p) -> str:
@@ -84,7 +48,6 @@ def _result_label(r: SearchResult) -> str:
         parts = ", ".join(r.thread.participants)
         return f'Conversation thread involving {parts}'
     return f'{r.result_type} #{r.item_id}'
-
 
 
 def _format_context(results: list[SearchResult]) -> str:
@@ -198,33 +161,6 @@ def _with_user_perspective_context(context: str, username: str | None) -> str:
 
 
 async def synthesis_node(state: AgentState) -> dict:
-<<<<<<< HEAD
-    """Generate a final answer grounded in retrieved documents with privacy protection.
-
-    Flow:
-    1. Format context from search results
-    2. Anonymize content using Presidio (if enabled)
-    3. Send anonymized context to LLM
-    4. Restore tokens in response
-    5. Return restored answer to user
-    """
-    results = state.get("search_results", [])
-    context = _format_context(results)
-
-    # Step 1: Anonymize before sending to LLM
-    anonymized_context = _privatizer.privatize_context(context)
-
-    logger.debug(f"Original context length: {len(context)}")
-    logger.debug(f"Anonymized context length: {len(anonymized_context)}")
-    if settings.privacy_enabled:
-        logger.debug(f"PII mappings: {_privatizer.get_current_mappings()}")
-
-    # Step 2: Create prompt with anonymized context
-    prompt = SYNTHESIS_PROMPT.format(
-        query=state["query"],
-        context=anonymized_context
-    )
-=======
     """Generate a final answer grounded in retrieved documents."""
     analytics_payload = state.get("analytics_payload")
     if analytics_payload:
@@ -257,26 +193,30 @@ async def synthesis_node(state: AgentState) -> dict:
         context,
         state.get("user_context_username"),
     )
+    #remote llm call
+    anonymized_context = privatize_context(context)
+    log_privacy_debug(context, anonymized_context)
 
-    prompt = SYNTHESIS_PROMPT.format(query=state["query"], context=context)
->>>>>>> 4870f7e9a9998b5865ec1df345cf9f948541bda7
+    prompt_template = (
+        REMOTE_SYNTHESIS_PROMPT
+        if settings.synthesis_llm_backend.strip().lower() == "openai"
+        else SYNTHESIS_PROMPT
+    )
+    prompt = prompt_template.format(
+        query=state["query"],
+        context=anonymized_context,
+    )
 
     try:
-        # Step 3: Call LLM with anonymized content
         answer = await _client.generate(prompt)
     except Exception as exc:
-        logger.error("LLM call failed: %s", exc)
+        logger.error("Synthesis LLM call failed: %s", exc)
         answer = (
             "I was unable to generate a response at this time. "
             f"Found {len(results)} relevant posts."
         )
-        return {
-            "answer": answer,
-            "reasoning": f"Route: {state.get('route', 'unknown')} | Results: {len(results)} | Error: {str(exc)}",
-        }
 
-    # Step 4: Restore tokens in the answer
-    restored_answer = _privatizer.restore(answer)
+    restored_answer = restore_text(answer)
 
     return {
         "answer": restored_answer,

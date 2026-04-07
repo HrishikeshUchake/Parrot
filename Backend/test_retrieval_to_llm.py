@@ -20,7 +20,26 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from Backend.config import settings
 from Backend.services.search_engine import HybridSearchEngine
 from Backend.services.privacy import PresidioPrivatizer, NoOpPrivatizer
-from Backend.llm.llm_provider import get_llm_provider
+from Backend.llm.llm_provider import get_node_llm_provider
+from Backend.llm.remote_prompts import REMOTE_SYNTHESIS_PROMPT
+
+
+def _describe_llm_client(llm_client) -> tuple[str, str, str]:
+    """Return provider, model, and endpoint for the instantiated client."""
+    class_name = llm_client.__class__.__name__
+    if class_name == "OpenAIProvider":
+        provider = "openai"
+        model = getattr(llm_client, "model", "unknown")
+        endpoint = getattr(llm_client, "base_url", "") or "https://api.openai.com/v1"
+    elif class_name == "OllamaClient":
+        provider = "ollama"
+        model = getattr(llm_client, "_model", "unknown")
+        endpoint = getattr(llm_client, "_base_url", "unknown")
+    else:
+        provider = class_name
+        model = getattr(llm_client, "model", getattr(llm_client, "_model", "unknown"))
+        endpoint = getattr(llm_client, "base_url", getattr(llm_client, "_base_url", "unknown"))
+    return provider, model, endpoint
 
 
 def _format_context(results) -> str:
@@ -119,24 +138,38 @@ async def test_retrieval_to_llm(user_query: str, top_k: int = 5):
     print("STEP 4: SENDING ANONYMIZED CONTEXT TO OPENAI")
     print("─" * 70)
 
-    prompt = f"""Based on the following social media posts, answer this question:
+    prompt = REMOTE_SYNTHESIS_PROMPT.format(
+        query=user_query,
+        context=anonymized_context,
+    )
 
-Question: {user_query}
+    llm_client = get_node_llm_provider("synthesis")
+    provider, model, endpoint = _describe_llm_client(llm_client)
+    print(f"Resolved synthesis provider: {provider}")
+    print(f"Resolved model: {model}")
+    print(f"Resolved endpoint: {endpoint}")
 
-Posts:
-{anonymized_context}
+    print("\n📤 EXACT ANONYMIZED CONTEXT SENT TO LLM:")
+    print("=" * 70)
+    print(anonymized_context)
+    print("=" * 70)
 
-Answer:"""
-
-    llm_client = get_llm_provider()
-    print("Calling OpenAI API...")
+    print("\n📤 FULL PROMPT SENT TO LLM:")
+    print("=" * 70)
+    print(prompt)
+    print("=" * 70)
 
     try:
         llm_response = await llm_client.generate(prompt)
-        print("✓ Response received from OpenAI")
+        print(f"✓ Response received from {provider}")
     except Exception as e:
         print(f"❌ LLM call failed: {e}")
         return
+
+    print("\n📥 RAW LLM RESPONSE (WITH PLACEHOLDERS):")
+    print("=" * 70)
+    print(llm_response)
+    print("=" * 70)
 
     # ── Step 5: Restore tokens ────────────────────────────────────────────────
     print("\n" + "─" * 70)
@@ -145,7 +178,7 @@ Answer:"""
 
     restored = privatizer.restore(llm_response)
 
-    print("\n✅ FINAL ANSWER (with PII restored):")
+    print("\n✅ FINAL ANSWER (PII RESTORED):")
     print("=" * 70)
     print(restored)
     print("=" * 70)
