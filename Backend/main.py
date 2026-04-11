@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import argparse
 import logging
+from typing import Any
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,7 +22,7 @@ logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
 
 # ── FastAPI application ───────────────────────────────────────────────────────────
 try:
-    from fastapi import FastAPI
+    from fastapi import Body, FastAPI, HTTPException
     from pydantic import BaseModel
     from .agents.graph import rag_graph
     from .llm.ollama_client import OllamaClient
@@ -49,10 +50,12 @@ try:
                             len(activities),
                         )
                         await ingest_activities(
-                            IngestRequest(username=username, activities=activities)
+                            IngestRequest(username=username,
+                                          activities=activities)
                         )
         except Exception as exc:
-            logger.warning("Startup sync failed (personal_assistant not ready?): %s", exc)
+            logger.warning(
+                "Startup sync failed (personal_assistant not ready?): %s", exc)
         yield
 
     import os
@@ -121,7 +124,8 @@ try:
                 content = f"{title}\n{text}".strip() if title else text
                 raw_tags = act.get("tag_list") or act.get("tags") or []
                 if isinstance(raw_tags, str):
-                    raw_tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
+                    raw_tags = [t.strip()
+                                for t in raw_tags.split(",") if t.strip()]
                 posts.append({
                     "id": str(act.get("post_id") or act.get("id") or uuid.uuid4()),
                     "content": content,
@@ -156,6 +160,55 @@ try:
             )
 
         return IngestResponse(status="ok", ingested=len(posts) + len(messages))
+
+    @app.post("/deposit_social_activities", response_model=IngestResponse)
+    async def deposit_social_activities(payload: Any = Body(None)) -> IngestResponse:
+        # Backward-compatible endpoint for clients posting to /deposit_social_activities.
+        username = os.environ.get("GRAPHRAG_USERNAME", "")
+        activities: list[dict] = []
+
+        if isinstance(payload, list):
+            activities = [x for x in payload if isinstance(x, dict)]
+        elif isinstance(payload, dict):
+            username = (
+                payload.get("username")
+                or payload.get("user_context_username")
+                or username
+            )
+
+            candidate = payload.get("activities")
+            if isinstance(candidate, list):
+                activities = [x for x in candidate if isinstance(x, dict)]
+            elif isinstance(payload.get("chats"), list):
+                for item in payload["chats"]:
+                    if not isinstance(item, dict):
+                        continue
+                    normalized = dict(item)
+                    normalized.setdefault("source", "individual_chat")
+                    if not normalized.get("text"):
+                        normalized["text"] = (
+                            normalized.get("message")
+                            or normalized.get("content")
+                            or normalized.get("body")
+                            or ""
+                        )
+                    activities.append(normalized)
+            else:
+                activity_like = {
+                    k: v for k, v in payload.items() if isinstance(v, (str, int, float, list, dict))
+                }
+                if activity_like:
+                    activities = [activity_like]
+
+        if not isinstance(activities, list) or not activities:
+            raise HTTPException(
+                status_code=400,
+                detail="Expected a payload with activities or chats.",
+            )
+
+        return await ingest_activities(
+            IngestRequest(username=username, activities=activities)
+        )
 
     @app.post("/query", response_model=QueryResponse)
     async def query_endpoint(req: QueryRequest) -> QueryResponse:
