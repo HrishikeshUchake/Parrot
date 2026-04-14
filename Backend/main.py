@@ -8,7 +8,12 @@ from __future__ import annotations
 import asyncio
 import argparse
 import logging
+import os
+from dotenv import load_dotenv
+from pathlib import Path
 from typing import Any
+
+load_dotenv(Path(__file__).parent / ".env")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,11 +37,10 @@ try:
 
     @contextlib.asynccontextmanager
     async def lifespan(application: FastAPI):
+        from .config import settings
         # On startup: pull all activities from personal_assistant and sync to Neo4j
-        personal_assistant_url = os.environ.get(
-            "PERSONAL_ASSISTANT_URL", "http://localhost:5002"
-        )
-        username = os.environ.get("GRAPHRAG_USERNAME", "")
+        personal_assistant_url = settings.personal_assistant_url
+        username = settings.graphrag_username
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.get(
@@ -163,8 +167,9 @@ try:
 
     @app.post("/deposit_social_activities", response_model=IngestResponse)
     async def deposit_social_activities(payload: Any = Body(None)) -> IngestResponse:
+        from .config import settings
         # Backward-compatible endpoint for clients posting to /deposit_social_activities.
-        username = os.environ.get("GRAPHRAG_USERNAME", "")
+        username = settings.graphrag_username
         activities: list[dict] = []
 
         if isinstance(payload, list):
