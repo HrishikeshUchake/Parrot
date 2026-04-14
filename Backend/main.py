@@ -94,6 +94,7 @@ try:
 
         posts = []
         messages = []
+        comments = []
 
         for act in req.activities:
             source = act.get("source", "")
@@ -113,6 +114,7 @@ try:
                     "date": act.get("date") or "",
                     "time_ms": ts,
                     "source": source,
+                    "user_context_username": req.username,
                 })
             else:
                 text = (
@@ -146,7 +148,23 @@ try:
                     "language": act.get("language") or "",
                     "source": source or "asmoment",
                     "title": title,
+                    "user_context_username": req.username,
                 })
+
+                for c in (act.get("comments") or []):
+                    if not isinstance(c, dict):
+                        continue
+                    c_text = c.get("content") or ""
+                    if c_text:
+                        comments.append({
+                            "id": str(c.get("id") or uuid.uuid4()),
+                            "post_id": str(act.get("post_id") or act.get("id") or ""),
+                            "commenter_name": c.get("commenter_name") or "",
+                            "content": c_text,
+                            "time": c.get("time") or "",
+                            "source": "comment",
+                            "user_context_username": req.username,
+                        })
 
         if posts:
             embeddings = svc.encode_batch([p["content"] for p in posts])
@@ -158,12 +176,17 @@ try:
             for msg, emb in zip(messages, embeddings):
                 msg["embedding"] = emb
 
-        if posts or messages:
+        if comments:
+            embeddings = svc.encode_batch([c["content"] for c in comments])
+            for comment, emb in zip(comments, embeddings):
+                comment["embedding"] = emb
+
+        if posts or messages or comments:
             store.batch_upsert_user_data(
-                posts=posts, messages=messages, comments=[], username=req.username
+                posts=posts, messages=messages, comments=comments, username=req.username
             )
 
-        return IngestResponse(status="ok", ingested=len(posts) + len(messages))
+        return IngestResponse(status="ok", ingested=len(posts) + len(messages) + len(comments))
 
     @app.post("/deposit_social_activities", response_model=IngestResponse)
     async def deposit_social_activities(payload: Any = Body(None)) -> IngestResponse:
@@ -243,6 +266,24 @@ try:
                 username = Counter(candidate_names).most_common(1)[0][0]
             else:
                 username = "me"
+
+            # Save the resolved username to .env so the CLI can pick it up automatically
+            env_path = Path(__file__).parent / ".env"
+            import re
+            if env_path.exists():
+                content = env_path.read_text("utf-8")
+                if "GRAPHRAG_USERNAME=" in content:
+                    content = re.sub(
+                        r"^GRAPHRAG_USERNAME=.*$", f"GRAPHRAG_USERNAME={username}", content, flags=re.MULTILINE)
+                else:
+                    if not content.endswith("\n"):
+                        content += "\n"
+                    content += f"GRAPHRAG_USERNAME={username}\n"
+                env_path.write_text(content, "utf-8")
+            else:
+                env_path.write_text(f"GRAPHRAG_USERNAME={username}\n", "utf-8")
+
+            os.environ["GRAPHRAG_USERNAME"] = username
 
         return await ingest_activities(
             IngestRequest(username=username, activities=activities)
@@ -349,6 +390,23 @@ def _run_import_if_requested(args: argparse.Namespace) -> bool:
         feed_path=Path(args.feed),
         messages_path=Path(args.messages),
     ))
+
+    # Save the username to .env for the CLI to pick up automatically
+    env_path = Path(__file__).parent / ".env"
+    import re
+    if env_path.exists():
+        content = env_path.read_text("utf-8")
+        if "GRAPHRAG_USERNAME=" in content:
+            content = re.sub(r"^GRAPHRAG_USERNAME=.*$",
+                             f"GRAPHRAG_USERNAME={args.username}", content, flags=re.MULTILINE)
+        else:
+            if not content.endswith("\n"):
+                content += "\n"
+            content += f"GRAPHRAG_USERNAME={args.username}\n"
+        env_path.write_text(content, "utf-8")
+    else:
+        env_path.write_text(f"GRAPHRAG_USERNAME={args.username}\n", "utf-8")
+
     print(
         f"Imported for {args.username}: "
         f"{stats.posts} posts, {stats.comments} comments, {stats.messages} messages"
@@ -359,4 +417,7 @@ def _run_import_if_requested(args: argparse.Namespace) -> bool:
 if __name__ == "__main__":
     cli_args = _build_cli_parser().parse_args()
     if not _run_import_if_requested(cli_args):
-        asyncio.run(interactive_loop(user_context_username=cli_args.username))
+        # Fall back to GRAPHRAG_USERNAME if the CLI arg --username isn't provided
+        context_user = cli_args.username or os.environ.get(
+            "GRAPHRAG_USERNAME") or None
+        asyncio.run(interactive_loop(user_context_username=context_user))

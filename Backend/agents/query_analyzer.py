@@ -15,6 +15,8 @@ _client = get_node_llm_provider("query_analyzer")
 
 _ANALYTICS_PATTERNS = [
     "message the most",
+    "text the most",
+    "texts the most",
     "messages usually discuss",
     "engage with my posts",
     "engages with my posts",
