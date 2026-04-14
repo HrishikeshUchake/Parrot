@@ -1,0 +1,69 @@
+Index:
+#   -> Contributer Name
+##  -> Topic Heading
+### -> Sub-topic heading
+
+#Haad -> 4/7/2026 - 4/14/2026:
+
+## Graph & Ingestion Improvements (User-Centric Refactor)
+
+### Graph Model Changes
+- Refactored graph to be user-centric instead of content-centric.
+- Added ownership relationships:
+  - `(:User)-[:HAS_POST]->(:Post)`
+  - `(:User)-[:HAS_MESSAGE]->(:Message)`
+  - `(:User)-[:HAS_COMMENT]->(:Comment)`
+- This enables queries starting from the user (e.g., "my posts", "my messages").
+
+### Messaging Relationships
+- Added `TALKS_TO` relationship between users:
+  - `(:User)-[:TALKS_TO]->(:User)`
+- Created during message ingestion based on sender/receiver.
+- Enables querying communication patterns directly between users.
+
+### Ingestion Fixes
+- Fixed missing/empty `username` during ingestion:
+  - System now assigns a consistent primary user when not provided.
+- Ensured all ingested data is properly linked to a `User` node.
+
+### Neo4j Validation
+- Verified graph structure via Cypher queries:
+  - User → Message/Post/Comment connections
+  - User ↔ User (`TALKS_TO`)
+- Confirmed expected node/relationship counts after re-ingestion.
+
+---
+
+## Retrieval & QA Observations
+
+### Multi-Model Testing
+Tested same query set across:
+- `llama3.2`
+- `qwen2.5:7b-instruct`
+- `gemma3:4b`
+
+### Key Finding
+- All models produced **similar incorrect results**.
+- Indicates issue is **not model-specific**.
+
+### Observed Failure Pattern
+- Message-based queries frequently:
+  - Returned **0 results**, or
+  - Retrieved **post data instead of messages**
+- Result: LLM answers based on incorrect context.
+
+### Example Impact
+- Queries about conversations (DMs) fail despite data existing in graph.
+- Post/comment queries sometimes succeed but lack consistency.
+
+---
+
+## Conclusion
+
+- **Graph structure and ingestion are functioning correctly.**
+- Primary remaining issue is in:
+  - Retrieval pipeline
+  - Query routing / source selection
+
+
+---
