@@ -210,6 +210,39 @@ try:
                 status_code=400,
                 detail="Expected a payload with activities or chats.",
             )
+        
+        if not username:
+            # Infer the primary user from the payload when the client does not send one.
+            candidate_names: list[str] = []
+
+            for act in activities:
+                if not isinstance(act, dict):
+                    continue
+
+                source = str(act.get("source", "") or "")
+                if source == "individual_chat":
+                    sender = str(act.get("sender_name", "") or "").strip()
+                    receiver = str(act.get("receiver_name", "") or "").strip()
+                    if sender:
+                        candidate_names.append(sender)
+                    if receiver:
+                        candidate_names.append(receiver)
+                else:
+                    author = str(
+                        act.get("author_name")
+                        or act.get("account_username")
+                        or act.get("account_acct")
+                        or ""
+                    ).strip()
+                    if author:
+                        candidate_names.append(author)
+
+            if candidate_names:
+                from collections import Counter
+                username = Counter(candidate_names).most_common(1)[0][0]
+            else:
+                username = "me"
+
 
         return await ingest_activities(
             IngestRequest(username=username, activities=activities)
