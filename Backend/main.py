@@ -169,7 +169,8 @@ try:
     async def deposit_social_activities(payload: Any = Body(None)) -> IngestResponse:
         from .config import settings
         # Backward-compatible endpoint for clients posting to /deposit_social_activities.
-        username = settings.graphrag_username
+        username = os.environ.get("GRAPHRAG_USERNAME", "").strip()
+
         activities: list[dict] = []
 
         if isinstance(payload, list):
@@ -210,7 +211,7 @@ try:
                 status_code=400,
                 detail="Expected a payload with activities or chats.",
             )
-        
+
         if not username:
             # Infer the primary user from the payload when the client does not send one.
             candidate_names: list[str] = []
@@ -242,7 +243,6 @@ try:
                 username = Counter(candidate_names).most_common(1)[0][0]
             else:
                 username = "me"
-
 
         return await ingest_activities(
             IngestRequest(username=username, activities=activities)
