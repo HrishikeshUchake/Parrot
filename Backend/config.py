@@ -3,6 +3,7 @@ Central configuration for the Parrot Agentic RAG system.
 All settings are read from environment variables with sensible defaults.
 """
 import logging
+import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
 
@@ -56,21 +57,17 @@ class Settings(BaseSettings):
     analytics_bucket_days: int = 7
     analytics_top_entities: int = 10
 
-    # --- Query cache (SQLite table) ---
-    cache_ttl_seconds: int = 3600
-
-    # --- Mastodon ingestion ---
-    mastodon_instance_url: str = "https://mastodon.social"
-    # optional; leave empty for public timeline
-    mastodon_access_token: str = ""
-    mastodon_fetch_limit: int = 200          # total statuses to ingest per run
-    # max per API page (Mastodon cap = 40)
-    mastodon_page_size: int = 40
-    # True = only statuses from that instance
-    mastodon_local_only: bool = False
-
     # --- User data ingestion ---
     user_data_import_batch_size: int = 64
+    personal_assistant_url: str = "http://localhost:5002"
+    graphrag_username: str = ""
+
+    # --- Hugging Face ---
+    hf_token: str = ""
 
 
 settings = Settings()
+
+# Set HF_TOKEN in environment for libraries like sentence-transformers/huggingface_hub
+if settings.hf_token:
+    os.environ["HF_TOKEN"] = settings.hf_token
