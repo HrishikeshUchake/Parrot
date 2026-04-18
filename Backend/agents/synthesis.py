@@ -5,13 +5,19 @@ import logging
 from .state import AgentState
 from ..database.models import SearchResult
 from ..config import settings
-from ..llm.llm_provider import get_node_llm_provider
+from ..llm.llm_provider import get_llm_provider_for_backend
 from ..llm.prompts import SYNTHESIS_PROMPT
 from ..llm.remote_prompts import REMOTE_SYNTHESIS_PROMPT
-from .synthesis_privacy import privatize_context, restore_text, log_privacy_debug
+from .synthesis_privacy import (
+    privatize_context,
+    restore_text,
+    log_privacy_debug,
+    build_privacy_debug_payload,
+)
 
 logger = logging.getLogger(__name__)
-_client = get_node_llm_provider("synthesis")
+_remote_client = get_llm_provider_for_backend("openai")
+_local_client = get_llm_provider_for_backend("ollama")
 
 
 def _post_label(p) -> str:
@@ -57,7 +63,7 @@ def _format_context(results: list[SearchResult]) -> str:
     for r in results:
         if r.result_type == "post" and r.post is not None:
             p = r.post
-            snippet = p.content[:400] + ("..." if len(p.content) > 400 else "")
+            snippet = p.content
             author = p.account_acct or p.account_username or "unknown"
             engagement = (
                 f"reblogs={p.reblogs_count}  favs={p.favourites_count}  "
@@ -73,23 +79,22 @@ def _format_context(results: list[SearchResult]) -> str:
 
         if r.result_type == "thread" and r.thread is not None:
             t = r.thread
-            # Combine the overall summary with the detailed raw messages for full context
-            snippet = f"--- Thread Summary ---\n{t.summary}\n\n--- Thread Messages ---\n"
-            for m in t.messages:
+            # Show summary + first 3 messages for brevity
+            snippet = f"{t.summary}\n"
+            for m in t.messages[:3]:
                 author_name = m.get('author', m.get('sender', 'unknown'))
-                time_str = m.get('time', '')
-                content_str = m.get('content', m.get('text', ''))
-                snippet += f" [{time_str}] {author_name}: {content_str}\n"
-            # Threads can be quite large, allow larger snippet context
-            snippet = snippet[:1500] + ("..." if len(snippet) > 1500 else "")
+                content_str = m.get('content', m.get('text', ''))[:100]
+                snippet += f"  @{author_name}: {content_str}\n"
+            if len(t.messages) > 3:
+                snippet += f"  ... ({len(t.messages) - 3} more messages)"
             lines.append(
                 f"[{_result_label(r)}] Score={r.score:.2f} | type=thread\n"
-                f"Participants={t.participants}\n"
-                f"Context:\n{snippet}"
+                f"Participants: {', '.join(t.participants)}\n"
+                f"{snippet}"
             )
             continue
 
-        snippet = r.content[:400] + ("..." if len(r.content) > 400 else "")
+        snippet = r.content
         lines.append(
             f"[{_result_label(r)}] Score={r.score:.2f} | type={r.result_type}\n"
             f"Metadata={r.metadata}\n"
@@ -160,8 +165,16 @@ def _with_user_perspective_context(context: str, username: str | None) -> str:
     return f"{preface}\n\n{context}"
 
 
-async def synthesis_node(state: AgentState) -> dict:
-    """Generate a final answer grounded in retrieved documents."""
+def synthesis_mode_decision(state: AgentState) -> str:
+    """Return explicit synthesis mode chosen by caller, defaulting from settings."""
+    requested = str(state.get("llm_mode", "")).strip().lower()
+    if requested in {"remote", "local"}:
+        return requested
+    return "remote" if settings.llm_backend.strip().lower() == "openai" else "local"
+
+
+def _non_llm_synthesis_result(state: AgentState) -> dict | None:
+    """Handle deterministic synthesis bypass paths shared by both modes."""
     analytics_payload = state.get("analytics_payload")
     if analytics_payload:
         answer = _render_analytics_answer(analytics_payload)
@@ -186,31 +199,34 @@ async def synthesis_node(state: AgentState) -> dict:
             ),
         }
 
+    return None
+
+
+async def synthesis_remote_node(state: AgentState) -> dict:
+    """Remote synthesis path: privatize -> remote prompt -> restore tokens."""
+    bypass = _non_llm_synthesis_result(state)
+    if bypass is not None:
+        return bypass
+
     results = state.get("search_results", [])
     context = _format_context(results)
-
     context = _with_user_perspective_context(
         context,
         state.get("user_context_username"),
     )
-    #remote llm call
+
     anonymized_context = privatize_context(context)
     log_privacy_debug(context, anonymized_context)
 
-    prompt_template = (
-        REMOTE_SYNTHESIS_PROMPT
-        if settings.synthesis_llm_backend.strip().lower() == "openai"
-        else SYNTHESIS_PROMPT
-    )
-    prompt = prompt_template.format(
+    prompt = REMOTE_SYNTHESIS_PROMPT.format(
         query=state["query"],
         context=anonymized_context,
     )
 
     try:
-        answer = await _client.generate(prompt)
+        answer = await _remote_client.generate(prompt)
     except Exception as exc:
-        logger.error("Synthesis LLM call failed: %s", exc)
+        logger.error("Remote synthesis LLM call failed: %s", exc)
         answer = (
             "I was unable to generate a response at this time. "
             f"Found {len(results)} relevant posts."
@@ -218,7 +234,61 @@ async def synthesis_node(state: AgentState) -> dict:
 
     restored_answer = restore_text(answer)
 
-    return {
+    out = {
         "answer": restored_answer,
-        "reasoning": f"Route: {state.get('route', 'unknown')} | Results: {len(results)}",
+        "reasoning": (
+            f"Route: {state.get('route', 'unknown')} | "
+            f"Synthesis: remote | Results: {len(results)}"
+        ),
+        "llm_mode": "remote",
+    }
+
+    if state.get("debug_pipeline"):
+        privacy_meta = build_privacy_debug_payload(context, anonymized_context)
+        out["privacy_debug"] = {
+            "privacy_enabled": privacy_meta["privacy_enabled"],
+            "privacy_anonymizer": privacy_meta["privacy_anonymizer"],
+            "privatizer_class": privacy_meta["privatizer_class"],
+            "pii_detected": privacy_meta["pii_detected"],
+            "mappings": privacy_meta["mappings"],
+            "anonymized_context": anonymized_context,
+            "remote_prompt": prompt,
+        }
+
+    return out
+
+
+async def synthesis_local_node(state: AgentState) -> dict:
+    """Local synthesis path: local prompt -> local LLM (no privacy tokenization)."""
+    bypass = _non_llm_synthesis_result(state)
+    if bypass is not None:
+        return bypass
+
+    results = state.get("search_results", [])
+    context = _format_context(results)
+    context = _with_user_perspective_context(
+        context,
+        state.get("user_context_username"),
+    )
+    prompt = SYNTHESIS_PROMPT.format(
+        query=state["query"],
+        context=context,
+    )
+
+    try:
+        answer = await _local_client.generate(prompt)
+    except Exception as exc:
+        logger.error("Local synthesis LLM call failed: %s", exc)
+        answer = (
+            "I was unable to generate a response at this time. "
+            f"Found {len(results)} relevant posts."
+        )
+
+    return {
+        "answer": answer,
+        "reasoning": (
+            f"Route: {state.get('route', 'unknown')} | "
+            f"Synthesis: local | Results: {len(results)}"
+        ),
+        "llm_mode": "local",
     }

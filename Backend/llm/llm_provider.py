@@ -20,12 +20,10 @@ class OpenAIProvider:
         self.base_url = settings.openai_base_url
         self.model = settings.openai_model
         self._client = AsyncClient(timeout=Timeout(15.0))
-        self._fallback = OllamaClient()
 
     async def generate(self, prompt: str, system: str = "") -> str:
         if not self.api_key:
-            logger.warning("OpenAI API key not set, falling back to Ollama")
-            return await self._fallback.generate(prompt, system=system)
+            raise RuntimeError("OPENAI_API_KEY is not set for remote synthesis mode")
 
         try:
             headers = {"Authorization": f"Bearer {self.api_key}"}
@@ -47,9 +45,8 @@ class OpenAIProvider:
             data = response.json()
             return data["choices"][0]["message"]["content"]
         except Exception as e:
-            logger.warning(
-                f"Remote LLM failed: {e}. Falling back to local Ollama.")
-            return await self._fallback.generate(prompt, system=system)
+            logger.error("Remote LLM failed: %s", e)
+            raise
 
 
 def get_llm_provider() -> LLMProvider:

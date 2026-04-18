@@ -9,8 +9,10 @@ Graph topology:
     /    |      \
 simple analytics advanced
     \     |      /
-      synthesis
-          |
+       synthesis_mode
+        /       \
+synthesis_remote synthesis_local
+        \       /
          END
 """
 from __future__ import annotations
@@ -24,7 +26,11 @@ from .retrieval import (
     advanced_retrieval_node,
     analytics_retrieval_node,
 )
-from .synthesis import synthesis_node
+from .synthesis import (
+    synthesis_remote_node,
+    synthesis_local_node,
+    synthesis_mode_decision,
+)
 
 
 def build_graph() -> StateGraph:
@@ -36,7 +42,8 @@ def build_graph() -> StateGraph:
     graph.add_node("simple_retrieval", simple_retrieval_node)
     graph.add_node("analytics_retrieval", analytics_retrieval_node)
     graph.add_node("advanced_retrieval", advanced_retrieval_node)
-    graph.add_node("synthesis", synthesis_node)
+    graph.add_node("synthesis_remote", synthesis_remote_node)
+    graph.add_node("synthesis_local", synthesis_local_node)
 
     # Entry
     graph.set_entry_point("query_analyzer")
@@ -55,11 +62,34 @@ def build_graph() -> StateGraph:
         },
     )
 
-    # Merge back to synthesis
-    graph.add_edge("simple_retrieval", "synthesis")
-    graph.add_edge("analytics_retrieval", "synthesis")
-    graph.add_edge("advanced_retrieval", "synthesis")
-    graph.add_edge("synthesis", END)
+    # Route to explicit local/remote synthesis mode
+    graph.add_conditional_edges(
+        "simple_retrieval",
+        synthesis_mode_decision,
+        {
+            "remote": "synthesis_remote",
+            "local": "synthesis_local",
+        },
+    )
+    graph.add_conditional_edges(
+        "analytics_retrieval",
+        synthesis_mode_decision,
+        {
+            "remote": "synthesis_remote",
+            "local": "synthesis_local",
+        },
+    )
+    graph.add_conditional_edges(
+        "advanced_retrieval",
+        synthesis_mode_decision,
+        {
+            "remote": "synthesis_remote",
+            "local": "synthesis_local",
+        },
+    )
+
+    graph.add_edge("synthesis_remote", END)
+    graph.add_edge("synthesis_local", END)
 
     return graph.compile()
 

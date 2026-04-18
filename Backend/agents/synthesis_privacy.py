@@ -36,6 +36,21 @@ def restore_text(text: str) -> str:
     return text
 
 
+def build_privacy_debug_payload(original_text: str, anonymized_text: str) -> dict:
+    """Return structured privacy debug info for CLI/API diagnostics."""
+    mappings = {}
+    if hasattr(_privatizer, "get_current_mappings"):
+        mappings = _privatizer.get_current_mappings()
+
+    return {
+        "privacy_enabled": bool(settings.privacy_enabled),
+        "privacy_anonymizer": settings.privacy_anonymizer,
+        "privatizer_class": _privatizer.__class__.__name__,
+        "pii_detected": anonymized_text != original_text,
+        "mappings": mappings,
+    }
+
+
 def log_privacy_debug(original_text: str, anonymized_text: str) -> None:
     logger.debug("Original context length: %s", len(original_text))
     logger.debug("Anonymized context length: %s", len(anonymized_text))

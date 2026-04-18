@@ -6,11 +6,20 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from .state import AgentState
-from ..llm.llm_provider import get_node_llm_provider
+from ..llm.llm_provider import get_node_llm_provider, get_llm_provider_for_backend
 from ..llm.prompts import QUERY_ANALYSIS_PROMPT
 
 logger = logging.getLogger(__name__)
 _client = get_node_llm_provider("query_analyzer")
+
+
+def _resolve_llm_client(state: AgentState):
+    mode = str(state.get("llm_mode", "")).strip().lower()
+    if mode == "local":
+        return get_llm_provider_for_backend("ollama")
+    if mode == "remote":
+        return get_llm_provider_for_backend("openai")
+    return _client
 
 
 _ANALYTICS_PATTERNS = [
@@ -106,9 +115,10 @@ async def query_analyzer_node(state: AgentState) -> dict:
     """Classify the user query and extract structured metadata."""
     query = state["query"]
     prompt = QUERY_ANALYSIS_PROMPT.format(query=query)
+    llm_client = _resolve_llm_client(state)
 
     try:
-        raw = await _client.generate(prompt)
+        raw = await llm_client.generate(prompt)
         # Strip markdown fences if present
         raw = raw.strip()
         if raw.startswith("```"):

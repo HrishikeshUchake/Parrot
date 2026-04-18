@@ -61,6 +61,7 @@ try:
     class QueryRequest(BaseModel):
         query: str
         user_context_username: str | None = None
+        llm_mode: str | None = None
 
     class QueryResponse(BaseModel):
         answer: str
@@ -165,6 +166,8 @@ try:
         }
         if req.user_context_username:
             state["user_context_username"] = req.user_context_username
+        if req.llm_mode:
+            state["llm_mode"] = req.llm_mode.strip().lower()
         result = await rag_graph.ainvoke(state)
         return QueryResponse(
             answer=result.get("answer", ""),
@@ -186,7 +189,93 @@ except ImportError as e:
 
 
 # ── Interactive CLI ────────────────────────────────────────────────────────────
-async def interactive_loop(user_context_username: str | None = None) -> None:
+def _print_pipeline_debug(result: dict) -> None:
+    """Print a concise trace of analyzer, router, and retrieval outputs."""
+    print("\n--- Pipeline Debug ---")
+    print(
+        "Analyzer: "
+        f"intent={result.get('intent', '?')} | "
+        f"complexity={result.get('complexity', '?')} | "
+        f"analytics_kind={result.get('analytics_kind', 'none')}"
+    )
+
+    entities = result.get("entities") or []
+    if entities:
+        print(f"Entities: {entities}")
+
+    filters = result.get("filters") or {}
+    if filters:
+        print(f"Filters: {filters}")
+
+    sub_queries = result.get("sub_queries") or []
+    if sub_queries:
+        print(f"Sub-queries: {sub_queries}")
+
+    print(f"Router: route={result.get('route', '?')}")
+    if result.get("llm_mode"):
+        print(f"LLM mode: {result.get('llm_mode')}")
+
+    analytics_payload = result.get("analytics_payload")
+    if analytics_payload:
+        print(
+            "Analytics payload: "
+            f"kind={analytics_payload.get('kind', '?')} | "
+            f"query_type={analytics_payload.get('query_type', '?')}"
+        )
+        print(f"Analytics summary: {analytics_payload.get('summary', '')}")
+
+    results = result.get("search_results") or []
+    print(f"Retrieved items: {len(results)}")
+    for i, item in enumerate(results[:5], 1):
+        kind = getattr(item, "result_type", "unknown")
+        score = getattr(item, "score", 0.0)
+        if kind == "post" and getattr(item, "post", None) is not None:
+            post = item.post
+            author = post.account_acct or post.account_username or "unknown"
+            preview = (post.content or "").replace("\n", " ")[:120]
+            print(f"  {i}. post | score={score:.3f} | @{author} | {preview}")
+        else:
+            content = (getattr(item, "content", "") or "").replace("\n", " ")[:120]
+            print(f"  {i}. {kind} | score={score:.3f} | {content}")
+
+    reasoning = result.get("reasoning")
+    if reasoning:
+        print(f"Reasoning: {reasoning}")
+
+    privacy_debug = result.get("privacy_debug") or {}
+    if privacy_debug:
+        print(
+            "Privacy: "
+            f"enabled={privacy_debug.get('privacy_enabled')} | "
+            f"anonymizer={privacy_debug.get('privacy_anonymizer')} | "
+            f"engine={privacy_debug.get('privatizer_class')} | "
+            f"pii_detected={privacy_debug.get('pii_detected')}"
+        )
+        mappings = privacy_debug.get("mappings") or {}
+        if mappings:
+            print("PII mappings:")
+            for token, original in mappings.items():
+                print(f"  {token} -> {original!r}")
+
+    anonymized_context = privacy_debug.get("anonymized_context")
+    remote_prompt = privacy_debug.get("remote_prompt")
+    if anonymized_context is not None:
+        print("\nAnonymized context sent to remote LLM:")
+        print("=" * 70)
+        print(anonymized_context)
+        print("=" * 70)
+    if remote_prompt is not None:
+        print("\nFull remote prompt sent to remote LLM:")
+        print("=" * 70)
+        print(remote_prompt)
+        print("=" * 70)
+
+
+async def interactive_loop(
+    user_context_username: str | None = None,
+    debug_pipeline: bool = False,
+    llm_mode: str | None = None,
+) -> None:
     from .agents.graph import rag_graph
 
     print("\nWelcome to Parrot Agentic RAG. Type your query (Ctrl-C to exit)\n")
@@ -206,7 +295,13 @@ async def interactive_loop(user_context_username: str | None = None) -> None:
         }
         if user_context_username:
             state["user_context_username"] = user_context_username
+        if llm_mode:
+            state["llm_mode"] = llm_mode
+        if debug_pipeline:
+            state["debug_pipeline"] = True
         result = await rag_graph.ainvoke(state)
+        if debug_pipeline:
+            _print_pipeline_debug(result)
         print(f"\n--- Answer ---")
         print(result.get("answer", "<no answer>"))
         print(
@@ -239,6 +334,17 @@ def _build_cli_parser() -> argparse.ArgumentParser:
         default="messages.jsonl",
         help="Path to messages JSONL",
     )
+    parser.add_argument(
+        "--debug-pipeline",
+        action="store_true",
+        help="Print query analyzer, router, and retrieval details for each query",
+    )
+    parser.add_argument(
+        "--llm-mode",
+        choices=["remote", "local"],
+        default=None,
+        help="Choose synthesis mode explicitly: remote (privacy + remote prompt) or local",
+    )
     return parser
 
 
@@ -268,4 +374,10 @@ def _run_import_if_requested(args: argparse.Namespace) -> bool:
 if __name__ == "__main__":
     cli_args = _build_cli_parser().parse_args()
     if not _run_import_if_requested(cli_args):
-        asyncio.run(interactive_loop(user_context_username=cli_args.username))
+        asyncio.run(
+            interactive_loop(
+                user_context_username=cli_args.username,
+                debug_pipeline=cli_args.debug_pipeline,
+                llm_mode=cli_args.llm_mode,
+            )
+        )

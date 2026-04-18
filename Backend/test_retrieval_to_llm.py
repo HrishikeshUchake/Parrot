@@ -12,6 +12,7 @@ Flow:
 """
 
 import asyncio
+import argparse
 import sys
 from pathlib import Path
 
@@ -50,7 +51,7 @@ def _format_context(results) -> str:
     for r in results:
         if r.result_type == "post" and r.post is not None:
             p = r.post
-            snippet = p.content[:400] + ("..." if len(p.content) > 400 else "")
+            snippet = p.content
             author = p.account_acct or p.account_username or "unknown"
             engagement = (
                 f"reblogs={p.reblogs_count}  favs={p.favourites_count}  "
@@ -62,7 +63,7 @@ def _format_context(results) -> str:
                 f"Content: {snippet}"
             )
         else:
-            snippet = (r.content or "")[:400]
+            snippet = r.content or ""
             lines.append(
                 f"[{r.result_type} #{r.item_id}] Score={r.score:.2f}\n"
                 f"Content: {snippet}"
@@ -70,12 +71,26 @@ def _format_context(results) -> str:
     return "\n---\n".join(lines)
 
 
-async def test_retrieval_to_llm(user_query: str, top_k: int = 5):
+def _with_user_perspective_context(context: str, username: str | None) -> str:
+    """Mirror production synthesis user-perspective preface."""
+    if not username:
+        return context
+    preface = (
+        "Assume you are answering on behalf of the user or analyzing the data "
+        "for the user. The primary user asking the question is '@"
+        f"{username}'. When referring to 'my' or 'I' in the query, it means "
+        f"@{username}."
+    )
+    return f"{preface}\n\n{context}"
+
+
+async def test_retrieval_to_llm(user_query: str, top_k: int = 5, username: str | None = None):
     print("=" * 70)
     print("RETRIEVAL → ANONYMIZE → OPENAI → RESTORE")
     print("=" * 70)
     print(f"\nUser query: {user_query!r}")
     print(f"Top K: {top_k}")
+    print(f"User Context: {username or 'none'}")
 
     # ── Step 1: Retrieve top posts from database ──────────────────────────────
     print("\n" + "─" * 70)
@@ -83,7 +98,8 @@ async def test_retrieval_to_llm(user_query: str, top_k: int = 5):
     print("─" * 70)
 
     engine = HybridSearchEngine()
-    results = engine.search(query=user_query, top_k=top_k)
+    metadata_filter = {"user_context_username": username} if username else None
+    results = engine.search(query=user_query, top_k=top_k, metadata_filter=metadata_filter)
 
     if not results:
         print("❌ No results found in database. Make sure posts are ingested.")
@@ -103,7 +119,8 @@ async def test_retrieval_to_llm(user_query: str, top_k: int = 5):
     print("STEP 2: FORMATTING CONTEXT")
     print("─" * 70)
     context = _format_context(results)
-    print(context[:600] + ("..." if len(context) > 600 else ""))
+    context = _with_user_perspective_context(context, username)
+    print(context)
 
     # ── Step 3: Anonymize with Presidio ───────────────────────────────────────
     print("\n" + "─" * 70)
@@ -126,10 +143,8 @@ async def test_retrieval_to_llm(user_query: str, top_k: int = 5):
         # Show what was replaced
         if hasattr(privatizer, "get_current_mappings"):
             mappings = privatizer.get_current_mappings()
-            for token, original in list(mappings.items())[:5]:
+            for token, original in mappings.items():
                 print(f"  {token} → {original!r}")
-            if len(mappings) > 5:
-                print(f"  ... and {len(mappings) - 5} more")
     else:
         print("✓ No PII detected in retrieved posts")
 
@@ -149,10 +164,10 @@ async def test_retrieval_to_llm(user_query: str, top_k: int = 5):
     print(f"Resolved model: {model}")
     print(f"Resolved endpoint: {endpoint}")
 
-    print("\n📤 EXACT ANONYMIZED CONTEXT SENT TO LLM:")
-    print("=" * 70)
-    print(anonymized_context)
-    print("=" * 70)
+    # print("\n📤 EXACT ANONYMIZED CONTEXT SENT TO LLM:")
+    # print("=" * 70)
+    # print(anonymized_context)
+    # print("=" * 70)
 
     print("\n📤 FULL PROMPT SENT TO LLM:")
     print("=" * 70)
@@ -176,7 +191,11 @@ async def test_retrieval_to_llm(user_query: str, top_k: int = 5):
     print("STEP 5: RESTORING PII TOKENS")
     print("─" * 70)
 
-    restored = privatizer.restore(llm_response)
+    if hasattr(privatizer, "restore"):
+        restored = privatizer.restore(llm_response)
+    else:
+        # NoOpPrivatizer may not implement restore; output is already plain text.
+        restored = llm_response
 
     print("\n✅ FINAL ANSWER (PII RESTORED):")
     print("=" * 70)
@@ -185,6 +204,9 @@ async def test_retrieval_to_llm(user_query: str, top_k: int = 5):
 
 
 if __name__ == "__main__":
-    # Change this query to test different topics
-    query = sys.argv[1] if len(sys.argv) > 1 else "What are people saying about privacy?"
-    asyncio.run(test_retrieval_to_llm(query, top_k=5))
+    parser = argparse.ArgumentParser(description="Run retrieval -> anonymize -> LLM test")
+    parser.add_argument("query", nargs="?", default="What are people saying about privacy?")
+    parser.add_argument("--username", default=None, help="User context username (matches Backend.main --username behavior)")
+    parser.add_argument("--top-k", type=int, default=5, help="Number of retrieval results")
+    args = parser.parse_args()
+    asyncio.run(test_retrieval_to_llm(args.query, top_k=args.top_k, username=args.username))
