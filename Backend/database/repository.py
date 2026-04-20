@@ -64,7 +64,7 @@ _KEYWORD_SEARCH = f"""
 
 
 class PostRepository:
-    """Read operations for Mastodon posts stored in Neo4j."""
+    """Read operations for posts stored in Neo4j."""
 
     def __init__(self) -> None:
         self._driver = GraphDatabase.driver(

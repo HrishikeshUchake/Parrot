@@ -2,6 +2,7 @@
 from __future__ import annotations
 import logging
 import re
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 from .state import AgentState
@@ -18,22 +19,17 @@ _store = VectorStore()
 _repo = PostRepository()
 _embedder = EmbeddingService()
 
-_META_PATTERNS = ["how many posts", "total posts",
-                  "count of posts", "database size"]
-
-_MESSAGE_TOPIC_KEYWORDS = [
-    "work",
-    "music",
-    "book",
-    "fitness",
-    "health",
-    "weekend",
-    "food",
-    "tech",
-    "citylife",
-    "mindset",
-    "learning",
-]
+_STOP_WORDS = {
+    "i", "me", "my", "we", "our", "you", "your", "he", "she", "it", "they",
+    "them", "his", "her", "its", "the", "a", "an", "and", "or", "but", "in",
+    "on", "at", "to", "for", "of", "with", "by", "from", "is", "are", "was",
+    "were", "be", "been", "have", "has", "had", "do", "does", "did", "will",
+    "would", "could", "should", "can", "not", "no", "so", "if", "as", "that",
+    "this", "these", "those", "what", "which", "who", "how", "when", "where",
+    "just", "also", "up", "out", "about", "get", "got", "like", "know",
+    "think", "see", "want", "come", "said", "say", "make", "made", "take",
+    "yeah", "okay", "hey", "yes", "haha", "lol", "im", "dont", "ill", "ive",
+}
 
 
 def _extract_user_context(state: AgentState) -> str:
@@ -301,83 +297,82 @@ def _build_trend_payload(state: AgentState, username: str) -> dict:
     }
 
 
-def _build_aggregate_payload(query: str, username: str) -> dict:
+def _build_aggregate_payload(query_type: str, username: str) -> dict:
     top_limit = max(1, int(settings.analytics_top_entities))
-    q = query.lower()
 
-    if "message the most" in q:
+    if query_type == "top_message_partners":
         top = _top_message_partners(username, limit=top_limit)
-        if not top:
-            summary = f"No direct message history found for user '{username}'."
-        else:
-            best_name, best_count = top[0]
-            summary = (
-                f"You message {best_name} the most ({best_count} messages). "
-                f"Top message partners: {_format_ranked(top)}."
-            )
+        summary = (
+            f"No direct message history found for user '{username}'."
+            if not top else
+            f"You message {top[0][0]} the most ({top[0][1]} messages). "
+            f"Top message partners: {_format_ranked(top)}."
+        )
         return {
             "kind": "aggregate",
-            "query_type": "top_message_partners",
+            "query_type": query_type,
             "user_context": username,
             "metrics": {"partners": [{"name": n, "count": c} for n, c in top]},
             "coverage": {"source": "neo4j_graph", "limit": top_limit},
             "summary": summary,
         }
 
-    if "messages usually discuss" in q or "direct messages usually discuss" in q:
+    if query_type == "top_message_topics":
         top = _top_message_topics(username, limit=top_limit)
-        if not top:
-            summary = f"No recurring direct-message topics found for user '{username}'."
-        else:
-            summary = f"Your direct messages most often discuss: {_format_ranked(top)}."
+        summary = (
+            f"No recurring direct-message topics found for user '{username}'."
+            if not top else
+            f"Your direct messages most often discuss: {_format_ranked(top)}."
+        )
         return {
             "kind": "aggregate",
-            "query_type": "top_message_topics",
+            "query_type": query_type,
             "user_context": username,
             "metrics": {"topics": [{"name": n, "count": c} for n, c in top]},
             "coverage": {"source": "neo4j_graph", "limit": top_limit},
             "summary": summary,
         }
 
-    if "engage with my posts" in q or "engages with my posts" in q:
+    if query_type == "top_engagers":
         top = _top_engagers(username, limit=top_limit)
-        if not top:
-            summary = f"No engagement comments found for user '{username}'."
-        else:
-            best_name, best_count = top[0]
-            summary = (
-                f"{best_name} engages with your posts the most ({best_count} comments). "
-                f"Top engagers: {_format_ranked(top)}."
-            )
+        summary = (
+            f"No engagement comments found for user '{username}'."
+            if not top else
+            f"{top[0][0]} engages with your posts the most ({top[0][1]} comments). "
+            f"Top engagers: {_format_ranked(top)}."
+        )
         return {
             "kind": "aggregate",
-            "query_type": "top_engagers",
+            "query_type": query_type,
             "user_context": username,
             "metrics": {"engagers": [{"name": n, "count": c} for n, c in top]},
             "coverage": {"source": "neo4j_graph", "limit": top_limit},
             "summary": summary,
         }
 
-    if "main topics i post" in q:
+    if query_type == "top_authored_themes":
         top = _top_themes_authored(username, limit=top_limit)
-        if not top:
-            summary = f"No authored post themes found for user '{username}'."
-        else:
-            summary = f"Your main posting themes are: {_format_ranked(top)}."
+        summary = (
+            f"No authored post themes found for user '{username}'."
+            if not top else
+            f"Your main posting themes are: {_format_ranked(top)}."
+        )
         return {
             "kind": "aggregate",
-            "query_type": "top_authored_themes",
+            "query_type": query_type,
             "user_context": username,
             "metrics": {"themes": [{"name": n, "count": c} for n, c in top]},
             "coverage": {"source": "neo4j_graph", "limit": top_limit},
             "summary": summary,
         }
 
+    # Default: top_interaction_themes
     top = _top_themes_interactions(username, limit=top_limit)
-    if not top:
-        summary = f"I couldn't find enough analytics data for user '{username}'."
-    else:
-        summary = f"Top themes in your social graph are: {_format_ranked(top)}."
+    summary = (
+        f"I couldn't find enough analytics data for user '{username}'."
+        if not top else
+        f"Top themes in your social graph are: {_format_ranked(top)}."
+    )
     return {
         "kind": "aggregate",
         "query_type": "top_interaction_themes",
@@ -385,6 +380,62 @@ def _build_aggregate_payload(query: str, username: str) -> dict:
         "metrics": {"themes": [{"name": n, "count": c} for n, c in top]},
         "coverage": {"source": "neo4j_graph", "limit": top_limit},
         "summary": summary,
+    }
+
+
+def _find_similar_usernames(name: str, limit: int = 5) -> list[str]:
+    """Return usernames that contain `name` (case-insensitive), excluding exact match."""
+    rows = _store.run_query(
+        """
+        MATCH (u:User)
+        WHERE toLower(u.username) CONTAINS toLower($name)
+          AND u.username <> $name
+        RETURN u.username AS username
+        LIMIT $limit
+        """,
+        name=name,
+        limit=limit,
+    )
+    return [str(r["username"]) for r in rows if r.get("username")]
+
+
+def _has_messages_with(username: str, partner: str) -> bool:
+    """Return True if there are any messages between username and partner."""
+    rows = _store.run_query(
+        """
+        MATCH (m:Message)
+        WHERE m.user_context_username = $username
+          AND (m.sender_name = $partner OR m.receiver_name = $partner)
+        RETURN m LIMIT 1
+        """,
+        username=username,
+        partner=partner,
+    )
+    return bool(rows)
+
+
+def _get_user_account_info(username: str) -> dict:
+    rows = _store.run_query(
+        """
+        MATCH (u:User {username: $username})
+        OPTIONAL MATCH (u)-[:HAS_POST]->(p:Post)
+        OPTIONAL MATCH (u)-[:HAS_MESSAGE]->(m:Message)
+        OPTIONAL MATCH (u)-[:HAS_COMMENT]->(c:Comment)
+        RETURN
+            count(DISTINCT p) AS post_count,
+            count(DISTINCT m) AS message_count,
+            count(DISTINCT c) AS comment_count
+        LIMIT 1
+        """,
+        username=username,
+    )
+    if not rows:
+        return {}
+    r = rows[0]
+    return {
+        "post_count": int(r.get("post_count", 0)),
+        "message_count": int(r.get("message_count", 0)),
+        "comment_count": int(r.get("comment_count", 0)),
     }
 
 
@@ -413,21 +464,16 @@ def _top_message_topics(username: str, limit: int = 5) -> list[tuple[str, int]]:
         MATCH (m:Message)
         WHERE m.user_context_username = $username
           AND (m.sender_name = $username OR m.receiver_name = $username)
-        WITH toLower(coalesce(m.text, "")) AS txt
-        UNWIND $keywords AS kw
-        WITH kw, txt
-        WHERE txt CONTAINS kw
-        RETURN kw AS topic, count(*) AS c
-        ORDER BY c DESC, topic ASC
-        LIMIT $limit
+        RETURN coalesce(m.text, "") AS text
     """
-    rows = _store.run_query(
-        cypher,
-        username=username,
-        keywords=_MESSAGE_TOPIC_KEYWORDS,
-        limit=limit,
-    )
-    return [(str(r.get("topic", "")), int(r.get("c", 0))) for r in rows]
+    rows = _store.run_query(cypher, username=username)
+    word_counts: Counter = Counter()
+    for row in rows:
+        words = re.findall(r"[a-z]{4,}", str(row.get("text", "")).lower())
+        for word in words:
+            if word not in _STOP_WORDS:
+                word_counts[word] += 1
+    return word_counts.most_common(limit)
 
 
 def _top_engagers(username: str, limit: int = 5) -> list[tuple[str, int]]:
@@ -485,11 +531,30 @@ def _top_themes_interactions(username: str, limit: int = 5) -> list[tuple[str, i
 
 async def simple_retrieval_node(state: AgentState) -> dict:
     """Vector + keyword hybrid search for a single query."""
-    query_lower = state["query"].lower()
     user_context = _extract_user_context(state)
 
+    # Handle identity queries directly from user context
+    if state.get("intent") == "identity":
+        if user_context:
+            info = _get_user_account_info(user_context)
+            parts = [f"You are {user_context}."]
+            if info.get("post_count"):
+                parts.append(f"Activities: {info['post_count']}")
+            if info.get("message_count"):
+                parts.append(f"Messages: {info['message_count']}")
+            if info.get("comment_count"):
+                parts.append(f"Comments: {info['comment_count']}")
+            return {
+                "search_results": [],
+                "answer": " | ".join(parts),
+            }
+        return {
+            "search_results": [],
+            "answer": "I don't know who you are yet — no user context has been set.",
+        }
+
     # Handle meta-queries directly without retrieval
-    if any(p in query_lower for p in _META_PATTERNS):
+    if state.get("intent") == "meta":
         count = _store.count_for_user(
             user_context) if user_context else _store.count
         scope = f" for user '{user_context}'" if user_context else ""
@@ -560,6 +625,30 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
         queries = [state["query"]] + queries
     user_context = _extract_user_context(state)
 
+    # For summary intent with a named entity, filter messages to that conversation partner
+    conversation_partner: str | None = None
+    if state.get("intent") == "summary":
+        entities = state.get("entities") or []
+        candidates = [e.lstrip("@").strip() for e in entities if e.strip()]
+        # Pick the first entity that isn't the logged-in user themselves
+        for candidate in candidates:
+            if candidate.lower() != (user_context or "").lower():
+                conversation_partner = candidate
+                break
+
+    # Guard: if a partner was named but has no messages, suggest similar users
+    if conversation_partner and user_context and not _has_messages_with(user_context, conversation_partner):
+        similar = _find_similar_usernames(conversation_partner)
+        if similar:
+            suggestions = ", ".join(f"**{u}**" for u in similar)
+            answer = (
+                f"I couldn't find any messages with '{conversation_partner}'. "
+                f"Did you mean one of these: {suggestions}?"
+            )
+        else:
+            answer = f"I couldn't find any messages with '{conversation_partner}' in your conversation history."
+        return {"search_results": [], "answer": answer}
+
     # Step 1 – hybrid multi-query retrieval
     results: list[SearchResult] = []
     per_query_k = max(settings.advanced_top_k // max(1, len(queries)), 3)
@@ -583,6 +672,7 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
                 query_embedding=emb,
                 username=user_context,
                 top_k=3,
+                partner=conversation_partner,
             ):
                 results.append(_to_message_result(h))
             for h in _store.similarity_search_comments(
@@ -678,12 +768,12 @@ async def analytics_retrieval_node(state: AgentState) -> dict:
             "answer": payload["summary"],
         }
 
-    is_trend_query = analytics_kind == "trend" or state.get(
-        "intent") == "trend_analysis"
+    is_trend_query = analytics_kind == "trend" or state.get("intent") == "trend_analysis"
     if is_trend_query:
         payload = _build_trend_payload(state, user_context)
     else:
-        payload = _build_aggregate_payload(query, user_context)
+        aggregate_query_type = state.get("aggregate_query_type", "none")
+        payload = _build_aggregate_payload(aggregate_query_type, user_context)
 
     return {
         "search_results": [],

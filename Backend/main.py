@@ -38,28 +38,60 @@ try:
     @contextlib.asynccontextmanager
     async def lifespan(application: FastAPI):
         from .config import settings
-        # On startup: pull all activities from personal_assistant and sync to Neo4j
+        from collections import Counter
         personal_assistant_url = settings.personal_assistant_url
         username = settings.graphrag_username
         try:
             async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.get(
-                    f"{personal_assistant_url}/all_activities"
-                )
+                resp = await client.get(f"{personal_assistant_url}/all_activities")
                 if resp.status_code == 200:
                     activities = resp.json()
                     if activities:
-                        logger.info(
-                            "Startup sync: %d activities from personal_assistant.",
-                            len(activities),
-                        )
+                        # Infer username from activities if not already set
+                        if not username:
+                            candidate_names: list[str] = []
+                            for act in activities:
+                                if not isinstance(act, dict):
+                                    continue
+                                if str(act.get("source", "")) == "individual_chat":
+                                    for key in ("sender_name", "receiver_name"):
+                                        val = str(act.get(key, "") or "").strip()
+                                        if val:
+                                            candidate_names.append(val)
+                                else:
+                                    val = str(act.get("author_name") or act.get("account_username") or "").strip()
+                                    if val:
+                                        candidate_names.append(val)
+                            if candidate_names:
+                                username = Counter(candidate_names).most_common(1)[0][0]
+                                os.environ["GRAPHRAG_USERNAME"] = username
+                                logger.info("Startup sync: inferred username '%s'.", username)
+
+                        logger.info("Startup sync: %d activities from personal_assistant.", len(activities))
                         await ingest_activities(
-                            IngestRequest(username=username,
-                                          activities=activities)
+                            IngestRequest(username=username, activities=activities)
                         )
         except Exception as exc:
-            logger.warning(
-                "Startup sync failed (personal_assistant not ready?): %s", exc)
+            logger.warning("Startup sync failed (personal_assistant not ready?): %s", exc)
+
+        # Fallback: if username still unknown, infer from Neo4j (data already imported)
+        if not os.environ.get("GRAPHRAG_USERNAME"):
+            try:
+                from .services.vector_store import VectorStore
+                rows = VectorStore().run_query("""
+                    MATCH (u:User)
+                    OPTIONAL MATCH (u)-[:HAS_POST]->(p:Post)
+                    OPTIONAL MATCH (u)-[:HAS_MESSAGE]->(m:Message)
+                    WITH u.username AS username, count(DISTINCT p) + count(DISTINCT m) AS total
+                    WHERE total > 0 AND username IS NOT NULL AND username <> ""
+                    RETURN username ORDER BY total DESC LIMIT 1
+                """)
+                if rows:
+                    inferred = rows[0]["username"]
+                    os.environ["GRAPHRAG_USERNAME"] = inferred
+                    logger.info("Startup: inferred username '%s' from Neo4j.", inferred)
+            except Exception as exc:
+                logger.warning("Startup: Neo4j username inference failed: %s", exc)
         yield
 
     import os
@@ -291,12 +323,14 @@ try:
 
     @app.post("/query", response_model=QueryResponse)
     async def query_endpoint(req: QueryRequest) -> QueryResponse:
+        from .config import settings
+        user = req.user_context_username or settings.graphrag_username or os.environ.get("GRAPHRAG_USERNAME") or None
         state = {
             "query": req.query,
             "search_results": [],
         }
-        if req.user_context_username:
-            state["user_context_username"] = req.user_context_username
+        if user:
+            state["user_context_username"] = user
         result = await rag_graph.ainvoke(state)
         return QueryResponse(
             answer=result.get("answer", ""),
