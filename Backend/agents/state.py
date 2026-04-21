@@ -21,6 +21,7 @@ class AgentState(TypedDict):
     complexity: str
     requires_graph_traversal: NotRequired[bool]
     analytics_kind: NotRequired[str]          # "none" | "aggregate" | "trend"
+    aggregate_query_type: NotRequired[str]    # "none" | "top_message_partners" | "top_message_topics" | "top_engagers" | "top_authored_themes" | "top_interaction_themes"
 
     # ── After Router
     route: str                              # "simple" | "analytics" | "advanced"

@@ -152,9 +152,11 @@ _UPSERT_COMMENT = """
         c.user_context_username  = $user_context_username,
         c.embedding              = $embedding
     WITH c
-    MATCH (p:Post {id: $post_id})
-    MERGE (p)-[:HAS_COMMENT]->(c)
-    WITH c, p
+    OPTIONAL MATCH (p:Post {id: $post_id})
+    FOREACH (_ IN CASE WHEN p IS NOT NULL THEN [1] ELSE [] END |
+        MERGE (p)-[:HAS_COMMENT]->(c)
+    )
+    WITH c
     MERGE (u:User {username: $commenter_name})
     MERGE (u)-[:COMMENTED]->(c)
     WITH c
@@ -191,8 +193,10 @@ _UPSERT_THREAD_CHUNK = """
         tc.user_context_username = $user_context_username,
         tc.embedding    = $embedding
     WITH tc
-    MATCH (t:ConversationThread {id: $thread_id})
-    MERGE (tc)-[:BELONGS_TO]->(t)
+    OPTIONAL MATCH (t:ConversationThread {id: $thread_id})
+    FOREACH (_ IN CASE WHEN t IS NOT NULL THEN [1] ELSE [] END |
+        MERGE (tc)-[:BELONGS_TO]->(t)
+    )
     WITH tc
     MERGE (ctx:User {username: $user_context_username})
     MERGE (ctx)-[:HAS_THREAD_CHUNK]->(tc)
@@ -262,6 +266,7 @@ _MESSAGE_VECTOR_SEARCH = """
     CALL db.index.vector.queryNodes($index, $top_k, $embedding)
     YIELD node AS m, score
     WHERE m.user_context_username = $username
+      AND ($partner IS NULL OR m.sender_name = $partner OR m.receiver_name = $partner)
     RETURN m.id                  AS id,
            m.text                AS text,
            m.sender_name         AS sender_name,
@@ -435,12 +440,14 @@ class VectorStore:
         query_embedding: list[float],
         username: str,
         top_k: int = settings.default_top_k,
+        partner: str | None = None,
     ) -> list[dict[str, Any]]:
         params: dict[str, Any] = {
             "index": self._message_index,
             "top_k": top_k,
             "embedding": query_embedding,
             "username": username,
+            "partner": partner,
         }
         with self._driver.session(database=self._db) as session:
             records = session.run(_MESSAGE_VECTOR_SEARCH, **params).data()

@@ -6,16 +6,15 @@ from typing import Literal
 
 
 class Post(BaseModel):
-    """Represents a single Mastodon status (toot)."""
+    """Represents a social post or activity."""
 
-    # Mastodon status ID (large integer as string)
     id: str
-    content: str = ""                   # HTML-stripped status text
-    created_at: str = ""                # ISO-8601 timestamp
-    account_id: str = ""                # author's Mastodon account ID
-    account_username: str = ""          # e.g. "alice"
-    account_display_name: str = ""      # e.g. "Alice Smith"
-    account_acct: str = ""              # e.g. "alice@mastodon.social"
+    content: str = ""
+    created_at: str = ""
+    account_id: str = ""
+    account_username: str = ""
+    account_display_name: str = ""
+    account_acct: str = ""
     tags: list[str] = Field(default_factory=list)   # hashtag names
     reblogs_count: int = 0
     favourites_count: int = 0
