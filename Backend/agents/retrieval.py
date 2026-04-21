@@ -384,19 +384,25 @@ def _build_aggregate_payload(query_type: str, username: str) -> dict:
 
 
 def _find_similar_usernames(name: str, limit: int = 5) -> list[str]:
-    """Return usernames that contain `name` (case-insensitive), excluding exact match."""
-    rows = _store.run_query(
-        """
-        MATCH (u:User)
-        WHERE toLower(u.username) CONTAINS toLower($name)
-          AND u.username <> $name
-        RETURN u.username AS username
-        LIMIT $limit
-        """,
-        name=name,
-        limit=limit,
-    )
-    return [str(r["username"]) for r in rows if r.get("username")]
+    """Return usernames similar to `name` using substring or fuzzy matching."""
+    from difflib import SequenceMatcher
+    rows = _store.run_query("MATCH (u:User) WHERE u.username IS NOT NULL RETURN u.username AS username")
+    name_lower = name.lower()
+    scored: list[tuple[float, str]] = []
+    for r in rows:
+        u = str(r.get("username", ""))
+        if not u or u == name:
+            continue
+        u_lower = u.lower()
+        # Prefer substring matches, fall back to similarity ratio
+        if name_lower in u_lower or u_lower in name_lower:
+            score = 1.0
+        else:
+            score = SequenceMatcher(None, name_lower, u_lower).ratio()
+        if score >= 0.6:
+            scored.append((score, u))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [u for _, u in scored[:limit]]
 
 
 def _has_messages_with(username: str, partner: str) -> bool:
@@ -563,6 +569,31 @@ async def simple_retrieval_node(state: AgentState) -> dict:
             "answer": f"There are {count} posts in the database{scope}.",
         }
 
+    # Safety net: detect a conversation partner even when LLM misroutes as factual_lookup
+    conversation_partner: str | None = None
+    if user_context:
+        entities = state.get("entities") or []
+        candidates = [e.lstrip("@").strip() for e in entities if e.strip()]
+        for candidate in candidates:
+            if (candidate.lower() != user_context.lower()
+                    and candidate.lower() not in _STOP_WORDS
+                    and len(candidate) >= 3):
+                conversation_partner = candidate
+                break
+
+    # Guard: named partner has no messages → return did-you-mean instead of hallucinating
+    if conversation_partner and user_context and not _has_messages_with(user_context, conversation_partner):
+        similar = _find_similar_usernames(conversation_partner)
+        if similar:
+            suggestions = ", ".join(f"**{u}**" for u in similar)
+            answer = (
+                f"I couldn't find any messages with '{conversation_partner}'. "
+                f"Did you mean one of these: {suggestions}?"
+            )
+        else:
+            answer = f"I couldn't find any messages with '{conversation_partner}' in your conversation history."
+        return {"search_results": [], "answer": answer}
+
     metadata_filter = state.get("filters") or None
     if user_context:
         metadata_filter = dict(metadata_filter or {})
@@ -581,6 +612,7 @@ async def simple_retrieval_node(state: AgentState) -> dict:
             query_embedding=query_embedding,
             username=user_context,
             top_k=max(3, settings.default_top_k // 2),
+            partner=conversation_partner,
         )
         comment_hits = _store.similarity_search_comments(
             query_embedding=query_embedding,
@@ -630,9 +662,10 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
     if state.get("intent") == "summary":
         entities = state.get("entities") or []
         candidates = [e.lstrip("@").strip() for e in entities if e.strip()]
-        # Pick the first entity that isn't the logged-in user themselves
         for candidate in candidates:
-            if candidate.lower() != (user_context or "").lower():
+            if (candidate.lower() != (user_context or "").lower()
+                    and candidate.lower() not in _STOP_WORDS
+                    and len(candidate) >= 3):
                 conversation_partner = candidate
                 break
 
@@ -653,41 +686,46 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
     results: list[SearchResult] = []
     per_query_k = max(settings.advanced_top_k // max(1, len(queries)), 3)
 
-    for q in queries:
-        metadata_filter = {
-            "user_context_username": user_context} if user_context else None
-        results.extend(
-            _engine.search(
-                query=q,
-                top_k=per_query_k,
-                metadata_filter=metadata_filter,
+    # When summarizing a specific conversation, skip general post search to avoid contamination
+    if not conversation_partner:
+        for q in queries:
+            metadata_filter = {
+                "user_context_username": user_context} if user_context else None
+            results.extend(
+                _engine.search(
+                    query=q,
+                    top_k=per_query_k,
+                    metadata_filter=metadata_filter,
+                )
             )
-        )
 
     if user_context:
-        # Add semantic matches from user comments/messages for each sub-query.
+        # Add semantic matches from user messages/comments/threads for each sub-query.
         for q in queries:
             emb = _embedder.encode(q)
             for h in _store.similarity_search_messages(
                 query_embedding=emb,
                 username=user_context,
-                top_k=3,
+                top_k=per_query_k,
                 partner=conversation_partner,
             ):
                 results.append(_to_message_result(h))
-            for h in _store.similarity_search_comments(
-                query_embedding=emb,
-                username=user_context,
-                top_k=3,
-            ):
-                results.append(_to_comment_result(h))
 
-            for h in _store.similarity_search_threads(
-                query_embedding=emb,
-                username=user_context,
-                top_k=3,
-            ):
-                results.append(_to_thread_result(h))
+            # Skip comments and threads when filtered to a specific partner
+            if not conversation_partner:
+                for h in _store.similarity_search_comments(
+                    query_embedding=emb,
+                    username=user_context,
+                    top_k=3,
+                ):
+                    results.append(_to_comment_result(h))
+
+                for h in _store.similarity_search_threads(
+                    query_embedding=emb,
+                    username=user_context,
+                    top_k=3,
+                ):
+                    results.append(_to_thread_result(h))
 
     # Deduplicate by (type, id), keeping best score.
     dedup: dict[tuple[str, str], SearchResult] = {}

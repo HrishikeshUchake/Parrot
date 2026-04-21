@@ -161,7 +161,14 @@ async def synthesis_node(state: AgentState) -> dict:
     """Generate a final answer grounded in retrieved documents."""
     analytics_payload = state.get("analytics_payload")
     if analytics_payload:
-        answer = _render_analytics_answer(analytics_payload)
+        context = _render_analytics_answer(analytics_payload)
+        context = _with_user_perspective_context(context, state.get("user_context_username"))
+        prompt = SYNTHESIS_PROMPT.format(query=state["query"], context=context)
+        try:
+            answer = await _client.generate(prompt)
+        except Exception as exc:
+            logger.error("Synthesis LLM call failed: %s", exc)
+            answer = analytics_payload.get("summary", "Analytics computed from graph.")
         return {
             "answer": answer,
             "reasoning": (
