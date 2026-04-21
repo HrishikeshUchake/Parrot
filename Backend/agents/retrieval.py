@@ -31,6 +31,43 @@ _STOP_WORDS = {
     "yeah", "okay", "hey", "yes", "haha", "lol", "im", "dont", "ill", "ive",
 }
 
+def _short(text: str, n: int = 80) -> str:
+    text = (text or "").replace("\n", " ").strip()
+    return text if len(text) <= n else text[:n] + "..."
+
+def _result_debug_summary(results: list[SearchResult]) -> list[str]:
+    lines = []
+    for i, r in enumerate(results, start=1):
+        if r.result_type == "post" and r.post is not None:
+            lines.append(
+                f"{i}. type=post | id={r.item_id} | score={r.score:.3f} | "
+                f"author={r.post.account_username or r.post.account_acct} | "
+                f"text={_short(r.post.content)}"
+            )
+        elif r.result_type == "message":
+            lines.append(
+                f"{i}. type=message | id={r.item_id} | score={r.score:.3f} | "
+                f"{r.metadata.get('sender_name', '')}->{r.metadata.get('receiver_name', '')} | "
+                f"text={_short(r.content)}"
+            )
+        elif r.result_type == "comment":
+            lines.append(
+                f"{i}. type=comment | id={r.item_id} | score={r.score:.3f} | "
+                f"commenter={r.metadata.get('commenter_name', '')} | "
+                f"text={_short(r.content)}"
+            )
+        elif r.result_type == "thread" and r.thread is not None:
+            lines.append(
+                f"{i}. type=thread | id={r.item_id} | score={r.score:.3f} | "
+                f"participants={r.thread.participants} | "
+                f"summary={_short(r.thread.summary)}"
+            )
+        else:
+            lines.append(
+                f"{i}. type={r.result_type} | id={r.item_id} | score={r.score:.3f}"
+            )
+    return lines
+
 
 def _extract_user_context(state: AgentState) -> str:
     """Get username from explicit state/filter first, then fallback to query hints."""
@@ -382,6 +419,40 @@ def _build_aggregate_payload(query_type: str, username: str) -> dict:
         "summary": summary,
     }
 
+def _analytics_debug_lines(payload: dict) -> list[str]:
+    lines = []
+    kind = payload.get("kind", "")
+    query_type = payload.get("query_type", "")
+    user_context = payload.get("user_context", "")
+    summary = payload.get("summary", "")
+    metrics = payload.get("metrics", {})
+    coverage = payload.get("coverage", {})
+
+    lines.append(f"Kind: {kind}")
+    lines.append(f"Query Type: {query_type}")
+    lines.append(f"User Context: {user_context}")
+    lines.append(f"Coverage: {coverage}")
+    lines.append(f"Summary: {summary}")
+
+    for key in ("partners", "topics", "engagers", "themes"):
+        rows = metrics.get(key)
+        if rows:
+            lines.append(f"{key.title()}: {rows}")
+
+    totals = metrics.get("totals")
+    if totals:
+        lines.append(f"Totals: {totals}")
+
+    trend = metrics.get("trend")
+    if trend:
+        lines.append(f"Trend: {trend}")
+
+    time_series = metrics.get("time_series")
+    if time_series:
+        preview = time_series[:5]
+        lines.append(f"Time Series Preview: {preview}")
+
+    return lines
 
 def _find_similar_usernames(name: str, limit: int = 5) -> list[str]:
     """Return usernames similar to `name` using substring or fuzzy matching."""
@@ -632,7 +703,19 @@ async def simple_retrieval_node(state: AgentState) -> dict:
 
     results.sort(key=lambda x: x.score, reverse=True)
     results = results[: settings.default_top_k]
-    logger.info("Simple retrieval: %d results", len(results))
+    logger.info(
+        "\n\n[SIMPLE_RETRIEVAL]\n"
+        "  User Context: %s\n"
+        "  Query: %s\n"
+        "  Metadata Filter: %s\n"
+        "  Results: %d\n",
+        user_context,
+        state["query"],
+        metadata_filter,
+        len(results),
+    )
+    for line in _result_debug_summary(results):
+        logger.info("  %s", line)
     return {"search_results": results}
 
 
@@ -735,8 +818,19 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
             dedup[key] = r
     results = list(dedup.values())
 
-    logger.info("Advanced retrieval step 1: %d results from %d queries", len(
-        results), len(queries))
+    logger.info(
+        "\n\n[ADVANCED_RETRIEVAL_STEP1]\n"
+        "  User Context: %s\n"
+        "  Queries: %s\n"
+        "  Conversation Partner: %s\n"
+        "  Deduped Results: %d\n",
+        user_context,
+        queries,
+        conversation_partner,
+        len(results),
+    )
+    for line in _result_debug_summary(results):
+        logger.info("  %s", line)
 
     # Step 2 – graph-neighbor enrichment via Neo4j traversal
     seen_ids = {r.post.id for r in results if r.post is not None}
@@ -771,14 +865,25 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
             for p in neighbor_posts
         ]
         results = results + graph_results
-        logger.info("Graph enrichment added %d neighbor posts.",
-                    len(graph_results))
+        logger.info(
+            "\n\n[ADVANCED_RETRIEVAL_GRAPH]\n"
+            "  Added Neighbor Posts: %d\n"
+            "  Neighbor IDs: %s\n",
+            len(graph_results),
+            neighbor_post_ids,
+        )
 
     # Step 3 – rerank by score, keep top-k
     results.sort(key=lambda x: x.score, reverse=True)
     results = results[: settings.advanced_top_k]
 
-    logger.info("Advanced retrieval final: %d results", len(results))
+    logger.info(
+        "\n\n[ADVANCED_RETRIEVAL_FINAL]\n"
+        "  Final Results: %d\n",
+        len(results),
+    )
+    for line in _result_debug_summary(results):
+        logger.info("  %s", line)
     return {"search_results": results}
 
 
@@ -800,6 +905,9 @@ async def analytics_retrieval_node(state: AgentState) -> dict:
                 "for example: 'for albert336'."
             ),
         }
+        logger.info("\n\n[ANALYTICS_RETRIEVAL]")
+        for line in _analytics_debug_lines(payload):
+            logger.info("  %s", line)
         return {
             "search_results": [],
             "analytics_payload": payload,
@@ -812,6 +920,10 @@ async def analytics_retrieval_node(state: AgentState) -> dict:
     else:
         aggregate_query_type = state.get("aggregate_query_type", "none")
         payload = _build_aggregate_payload(aggregate_query_type, user_context)
+
+    logger.info("\n\n[ANALYTICS_RETRIEVAL]")
+    for line in _analytics_debug_lines(payload):
+        logger.info("  %s", line)
 
     return {
         "search_results": [],

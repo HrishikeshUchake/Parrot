@@ -46,6 +46,8 @@ def _result_label(r: SearchResult) -> str:
         return f'Conversation thread involving {parts}'
     return f'{r.result_type} #{r.item_id}'
 
+def _result_brief(r: SearchResult) -> str:
+    return f"type={r.result_type} | id={r.item_id} | score={r.score:.3f}"
 
 def _format_context(results: list[SearchResult]) -> str:
     if not results:
@@ -163,6 +165,19 @@ async def synthesis_node(state: AgentState) -> dict:
     if analytics_payload:
         context = _render_analytics_answer(analytics_payload)
         context = _with_user_perspective_context(context, state.get("user_context_username"))
+
+        logger.info(
+            "\n\n[SYNTHESIS_ANALYTICS]\n"
+            "  Route: %s\n"
+            "  Query: %s\n"
+            "  Payload Kind: %s\n"
+            "  Payload Query Type: %s\n",
+            state.get("route", "unknown"),
+            state["query"],
+            analytics_payload.get("kind"),
+            analytics_payload.get("query_type"),
+        )
+
         prompt = SYNTHESIS_PROMPT.format(query=state["query"], context=context)
         try:
             answer = await _client.generate(prompt)
@@ -197,6 +212,18 @@ async def synthesis_node(state: AgentState) -> dict:
         context,
         state.get("user_context_username"),
     )
+
+    logger.info(
+        "\n\n[SYNTHESIS]\n"
+        "  Route: %s\n"
+        "  Query: %s\n"
+        "  Num Results: %d\n",
+        state.get("route", "unknown"),
+        state["query"],
+        len(results),
+    )
+    for r in results:
+        logger.info("  %s", _result_brief(r))
 
     prompt = SYNTHESIS_PROMPT.format(query=state["query"], context=context)
 
