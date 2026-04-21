@@ -354,6 +354,31 @@ except ImportError as e:
 # ── Interactive CLI ────────────────────────────────────────────────────────────
 _CONFIRMATIONS = {"yes", "yeah", "yep", "yup", "sure", "ok", "okay", "y"}
 
+def _cli_source_preview(results: list[Any]) -> list[str]:
+    lines = []
+    for i, r in enumerate(results[:5], start=1):
+        result_type = getattr(r, "result_type", "unknown")
+        item_id = getattr(r, "item_id", "")
+        score = getattr(r, "score", 0.0)
+        metadata = getattr(r, "metadata", {}) or {}
+
+        if result_type == "message":
+            label = f"{metadata.get('sender_name', '')}->{metadata.get('receiver_name', '')}"
+        elif result_type == "thread":
+            thread = getattr(r, "thread", None)
+            label = f"participants={getattr(thread, 'participants', [])}"
+        elif result_type == "comment":
+            label = f"commenter={metadata.get('commenter_name', '')}"
+        elif result_type == "post":
+            post = getattr(r, "post", None)
+            label = f"author={getattr(post, 'account_username', '') if post else ''}"
+        else:
+            label = ""
+
+        lines.append(
+            f"  {i}. {result_type} | id={item_id} | score={score:.3f} | {label}"
+        )
+    return lines
 
 async def interactive_loop(user_context_username: str | None = None) -> None:
     import re as _re
@@ -406,10 +431,11 @@ async def interactive_loop(user_context_username: str | None = None) -> None:
 
         print(f"\n--- Answer ---")
         print(answer)
-        print(
-            f"\n[Route: {result.get('route', '?')} | "
-            f"Sources: {len(result.get('search_results', []))}]\n"
-        )
+        sources = result.get("search_results", [])
+        print(f"\n[Route: {result.get('route', '?')} | Sources: {len(sources)}]")
+        for line in _cli_source_preview(sources):
+            print(line)
+        print()
 
 
 def _build_cli_parser() -> argparse.ArgumentParser:

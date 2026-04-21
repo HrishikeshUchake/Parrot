@@ -10,6 +10,11 @@ from ..llm.llm_provider import get_node_llm_provider
 from ..llm.prompts import QUERY_ANALYSIS_PROMPT
 
 logger = logging.getLogger(__name__)
+
+def _truncate(text: str, n: int = 120) -> str:
+    text = (text or "").replace("\n", " ").strip()
+    return text if len(text) <= n else text[:n] + "..."
+
 _client = get_node_llm_provider("query_analyzer")
 
 
@@ -113,6 +118,30 @@ async def query_analyzer_node(state: AgentState) -> dict:
 
     if requires_graph_traversal and not sub_queries:
         sub_queries = [query]
+
+    logger.info(
+        "\n\n[QUERY_ANALYZER]\n"
+        "  Query: %s\n"
+        "  Intent: %s\n"
+        "  Entities: %s\n"
+        "  Filters: %s\n"
+        "  Date Filter: %s\n"
+        "  Sub Queries: %s\n"
+        "  Complexity: %s\n"
+        "  Requires Graph: %s\n"
+        "  Analytics Kind: %s\n"
+        "  Aggregate Type: %s\n",
+        _truncate(query),
+        intent,
+        analysis.get("entities", []),
+        filters,
+        date_filter,
+        sub_queries,
+        complexity,
+        requires_graph_traversal,
+        analytics_kind,
+        aggregate_query_type,
+    )
 
     return {
         "intent": intent,
