@@ -116,6 +116,7 @@ _UPSERT_USER_POST = """
     MERGE (a)-[:AUTHORED]->(p)
     WITH p
     MERGE (u:User {username: $user_context_username})
+    MERGE (u)-[:HAS_POST]->(p)
     MERGE (u)-[:CAN_SEE]->(p)
 """
 
@@ -134,8 +135,10 @@ _UPSERT_MESSAGE = """
     MERGE (r:User {username: $receiver_name})
     MERGE (s)-[:SENT]->(m)
     MERGE (m)-[:TO]->(r)
+    MERGE (s)-[:TALKS_TO]->(r)
     WITH m
     MERGE (u:User {username: $user_context_username})
+    MERGE (u)-[:HAS_MESSAGE]->(m)
     MERGE (u)-[:CAN_SEE]->(m)
 """
 
@@ -156,6 +159,7 @@ _UPSERT_COMMENT = """
     MERGE (u)-[:COMMENTED]->(c)
     WITH c
     MERGE (ctx:User {username: $user_context_username})
+    MERGE (ctx)-[:HAS_COMMENT]->(c)
     MERGE (ctx)-[:CAN_SEE]->(c)
 """
 
@@ -174,6 +178,7 @@ _UPSERT_THREAD = """
     MERGE (u)-[:PARTICIPATED_IN]->(t)
     WITH t
     MERGE (ctx:User {username: $user_context_username})
+    MERGE (ctx)-[:HAS_THREAD]->(t)
     MERGE (ctx)-[:CAN_SEE]->(t)
 """
 
@@ -190,6 +195,7 @@ _UPSERT_THREAD_CHUNK = """
     MERGE (tc)-[:BELONGS_TO]->(t)
     WITH tc
     MERGE (ctx:User {username: $user_context_username})
+    MERGE (ctx)-[:HAS_THREAD_CHUNK]->(tc)
     MERGE (ctx)-[:CAN_SEE]->(tc)
 """
 

@@ -617,7 +617,7 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
     for r in results[: settings.default_top_k]:          # expand from top-k seeds
         if r.post is None:
             continue
-        neighbors = _store.graph_neighbors(r.post.id, hops=1)
+        neighbors = _store.graph_neighbors(r.post.id)
         for n in neighbors:
             nid = str(n["id"])
             if nid not in seen_ids:

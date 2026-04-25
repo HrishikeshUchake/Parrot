@@ -137,14 +137,14 @@ class HybridSearchEngine:
         vec_ids: set[str] = set()
 
         for rank, r in enumerate(vec_results, start=1):
-            pid = r.post.id
+            pid = r.item_id
             vec_ids.add(pid)
             if pid not in merged_dict:
                 merged_dict[pid] = r
             scores[pid] = scores.get(pid, 0.0) + 1.0 / (k_rrf + rank)
 
         for rank, r in enumerate(kw_results, start=1):
-            pid = r.post.id
+            pid = r.item_id
             if pid not in merged_dict:
                 r.source = "keyword"
                 merged_dict[pid] = r
@@ -175,8 +175,8 @@ class HybridSearchEngine:
 
         for q in queries:
             for r in self.search(q, top_k=per_query_k, date_range=date_range, metadata_filter=metadata_filter):
-                if r.post.id not in seen:
-                    seen.add(r.post.id)
+                if r.item_id not in seen:
+                    seen.add(r.item_id)
                     all_results.append(r)
 
         all_results.sort(key=lambda x: x.score, reverse=True)

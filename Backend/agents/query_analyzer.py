@@ -24,6 +24,8 @@ def _resolve_llm_client(state: AgentState):
 
 _ANALYTICS_PATTERNS = [
     "message the most",
+    "text the most",
+    "texts the most",
     "messages usually discuss",
     "engage with my posts",
     "engages with my posts",
