@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 try:
-    from presidio_analyzer import AnalyzerEngine
+    from presidio_analyzer import AnalyzerEngine, PatternRecognizer, Pattern
     PRESIDIO_AVAILABLE = True
 except ImportError:
     PRESIDIO_AVAILABLE = False
@@ -173,6 +173,20 @@ class PresidioPrivatizer(ContentPrivatizer):
 
         super().__init__(config)
         self.analyzer = AnalyzerEngine()
+        
+        # Add custom recognizer for social media usernames (@username)
+        # We ensure the username doesn't end with a dot or hyphen by requiring a word char at the end
+        username_pattern = Pattern(
+            name="username_pattern",
+            regex=r"(?i)\B@[\w\.-]*[\w]",
+            score=0.9
+        )
+        username_recognizer = PatternRecognizer(
+            supported_entity="USERNAME",
+            patterns=[username_pattern]
+        )
+        self.analyzer.registry.add_recognizer(username_recognizer)
+        
         self.mappings = {}  # token -> original value
         self.reverse_mappings = {}  # original value -> token (for consistency)
         self.counters = {}  # entity_type -> count
@@ -219,10 +233,13 @@ class PresidioPrivatizer(ContentPrivatizer):
             entity_type = r.entity_type
             original_value = text[r.start:r.end]
 
+            # Use a normalized value for checking to ensure case-insensitivity
+            normalized_value = original_value.lower()
+
             # Check if we've seen this exact value before
-            if original_value in self.reverse_mappings:
+            if normalized_value in self.reverse_mappings:
                 # Reuse the existing token for consistency
-                token = self.reverse_mappings[original_value]
+                token = self.reverse_mappings[normalized_value]
             else:
                 # Create a new token for this value
                 self.counters[entity_type] = self.counters.get(entity_type, 0) + 1
@@ -230,7 +247,7 @@ class PresidioPrivatizer(ContentPrivatizer):
 
                 # Store the mapping both ways
                 self.mappings[token] = original_value
-                self.reverse_mappings[original_value] = token
+                self.reverse_mappings[normalized_value] = token
 
             # Append text before entity
             out_parts.append(text[last:r.start])

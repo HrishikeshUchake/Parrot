@@ -364,10 +364,10 @@ def _print_pipeline_debug(result: dict) -> None:
         if kind == "post" and getattr(item, "post", None) is not None:
             post = item.post
             author = post.account_acct or post.account_username or "unknown"
-            preview = (post.content or "").replace("\n", " ")[:120]
+            preview = (post.content or "").replace("\n", " ")[:300]
             print(f"  {i}. post | score={score:.3f} | @{author} | {preview}")
         else:
-            content = (getattr(item, "content", "") or "").replace("\n", " ")[:120]
+            content = (getattr(item, "content", "") or "").replace("\n", " ")[:300]
             print(f"  {i}. {kind} | score={score:.3f} | {content}")
 
     reasoning = result.get("reasoning")
@@ -391,6 +391,9 @@ def _print_pipeline_debug(result: dict) -> None:
 
     anonymized_context = privacy_debug.get("anonymized_context")
     remote_prompt = privacy_debug.get("remote_prompt")
+    anonymized_answer = privacy_debug.get("anonymized_answer")
+    restored_answer = result.get("answer")
+
     if anonymized_context is not None:
         print("\nAnonymized context sent to remote LLM:")
         print("=" * 70)
@@ -400,6 +403,16 @@ def _print_pipeline_debug(result: dict) -> None:
         print("\nFull remote prompt sent to remote LLM:")
         print("=" * 70)
         print(remote_prompt)
+        print("=" * 70)
+    if anonymized_answer is not None:
+        print("\nPrivatized retrieved response (anonymized answer):")
+        print("=" * 70)
+        print(anonymized_answer)
+        print("=" * 70)
+    if restored_answer is not None:
+        print("\nDeanonymized retrieved answer:")
+        print("=" * 70)
+        print(restored_answer)
         print("=" * 70)
 
 

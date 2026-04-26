@@ -84,9 +84,15 @@ class PostRepository:
 
     def keyword_search(self, query: str, limit: int = 10) -> list[Post]:
         """Case-insensitive keyword search over content, tags and account fields."""
+        import re
+        # Sanitize query for Lucene parser: remove special punctuation
+        safe_query = re.sub(r'[^\w\s]', ' ', query).strip()
+        if not safe_query:
+            return []
+            
         with self._driver.session(database=self._db) as session:
             records = session.run(
-                _KEYWORD_SEARCH, search_term=query, limit=limit
+                _KEYWORD_SEARCH, search_term=safe_query, limit=limit
             ).data()
         return [self._record_to_post(r) for r in records]
 

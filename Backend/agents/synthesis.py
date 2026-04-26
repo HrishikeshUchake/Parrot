@@ -42,7 +42,7 @@ def _result_label(r: SearchResult) -> str:
         text = (r.content or "").strip()
         text = (text[:80].rsplit(None, 1)[0] +
                 "...") if len(text) > 80 else text
-        return f'Message "{text}" ({sender} -> {receiver})'
+        return f'Message "{text}" (@{sender} -> @{receiver})'
     if r.result_type == "comment":
         commenter = r.metadata.get("commenter_name", "unknown")
         post_id = r.metadata.get("post_id", "")
@@ -51,7 +51,7 @@ def _result_label(r: SearchResult) -> str:
                 "...") if len(text) > 80 else text
         return f'Comment "{text}" by @{commenter} on Post {post_id}'
     if r.result_type == "thread" and r.thread is not None:
-        parts = ", ".join(r.thread.participants)
+        parts = ", ".join([f"@{p}" for p in r.thread.participants])
         return f'Conversation thread involving {parts}'
     return f'{r.result_type} #{r.item_id}'
 
@@ -72,7 +72,7 @@ def _format_context(results: list[SearchResult]) -> str:
             label = _result_label(r)
             lines.append(
                 f"[{label}] Score={r.score:.2f} | type=post | @{author} | {engagement}\n"
-                f"Tags={p.tags}\n"
+                f"Tags: {', '.join(p.tags)}\n"
                 f"Content: {snippet}"
             )
             continue
@@ -89,15 +89,26 @@ def _format_context(results: list[SearchResult]) -> str:
                 snippet += f"  ... ({len(t.messages) - 3} more messages)"
             lines.append(
                 f"[{_result_label(r)}] Score={r.score:.2f} | type=thread\n"
-                f"Participants: {', '.join(t.participants)}\n"
+                f"Participants: {', '.join(['@' + p for p in t.participants])}\n"
                 f"{snippet}"
             )
             continue
 
         snippet = r.content
+        meta = r.metadata.copy()
+        meta.pop("time_ms", None) # Remove to avoid US_BANK_NUMBER false positives
+        
+        # Format sender/receiver as @usernames so our custom recognizer catches them easily
+        if "sender_name" in meta:
+            meta["sender"] = f"@{meta.pop('sender_name')}"
+        if "receiver_name" in meta:
+            meta["receiver"] = f"@{meta.pop('receiver_name')}"
+            
+        meta_str = ", ".join(f"{k}={v}" for k, v in meta.items())
+        
         lines.append(
             f"[{_result_label(r)}] Score={r.score:.2f} | type={r.result_type}\n"
-            f"Metadata={r.metadata}\n"
+            f"Metadata: {meta_str}\n"
             f"Content: {snippet}"
         )
     return "\n---\n".join(lines)
@@ -156,11 +167,15 @@ def _with_user_perspective_context(context: str, username: str | None) -> str:
     """Add user-perspective guidance to synthesis context when username is available."""
     if not username:
         return context
+        
+    # Check if the username was anonymized in the context, and if so, update the premise to point to the anonymized token
+    anonymized_user_token = privatize_context(f"@{username}").strip()
+    
     preface = (
         "Assume you are answering on behalf of the user or analyzing the data "
-        "for the user. The primary user asking the question is '@"
-        f"{username}'. When referring to 'my' or 'I' in the query, it means "
-        f"@{username}."
+        f"for the user. The primary user asking the question is '{anonymized_user_token}'."
+        f" Whenever referring to '{anonymized_user_token}', use 'you' or 'your' instead of their username."
+        f" When the user says 'my' or 'I' in the query, they are referring to '{anonymized_user_token}'."
     )
     return f"{preface}\n\n{context}"
 
@@ -210,13 +225,14 @@ async def synthesis_remote_node(state: AgentState) -> dict:
 
     results = state.get("search_results", [])
     context = _format_context(results)
-    context = _with_user_perspective_context(
-        context,
-        state.get("user_context_username"),
-    )
 
     anonymized_context = privatize_context(context)
     log_privacy_debug(context, anonymized_context)
+    
+    anonymized_context = _with_user_perspective_context(
+        anonymized_context,
+        state.get("user_context_username"),
+    )
 
     prompt = REMOTE_SYNTHESIS_PROMPT.format(
         query=state["query"],
@@ -253,6 +269,7 @@ async def synthesis_remote_node(state: AgentState) -> dict:
             "mappings": privacy_meta["mappings"],
             "anonymized_context": anonymized_context,
             "remote_prompt": prompt,
+            "anonymized_answer": answer,
         }
 
     return out
