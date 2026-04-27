@@ -55,6 +55,8 @@ def _result_label(r: SearchResult) -> str:
         return f'Conversation thread involving {parts}'
     return f'{r.result_type} #{r.item_id}'
 
+def _result_brief(r: SearchResult) -> str:
+    return f"type={r.result_type} | id={r.item_id} | score={r.score:.3f}"
 
 def _format_context(results: list[SearchResult]) -> str:
     if not results:
@@ -188,11 +190,31 @@ def synthesis_mode_decision(state: AgentState) -> str:
     return "remote" if settings.llm_backend.strip().lower() == "openai" else "local"
 
 
-def _non_llm_synthesis_result(state: AgentState) -> dict | None:
+async def _non_llm_synthesis_result(state: AgentState) -> dict | None:
     """Handle deterministic synthesis bypass paths shared by both modes."""
     analytics_payload = state.get("analytics_payload")
     if analytics_payload:
-        answer = _render_analytics_answer(analytics_payload)
+        context = _render_analytics_answer(analytics_payload)
+        context = _with_user_perspective_context(context, state.get("user_context_username"))
+
+        logger.info(
+            "\n\n[SYNTHESIS_ANALYTICS]\n"
+            "  Route: %s\n"
+            "  Query: %s\n"
+            "  Payload Kind: %s\n"
+            "  Payload Query Type: %s\n",
+            state.get("route", "unknown"),
+            state["query"],
+            analytics_payload.get("kind"),
+            analytics_payload.get("query_type"),
+        )
+
+        prompt = SYNTHESIS_PROMPT.format(query=state["query"], context=context)
+        try:
+            answer = await _client.generate(prompt)
+        except Exception as exc:
+            logger.error("Synthesis LLM call failed: %s", exc)
+            answer = analytics_payload.get("summary", "Analytics computed from graph.")
         return {
             "answer": answer,
             "reasoning": (
@@ -219,7 +241,7 @@ def _non_llm_synthesis_result(state: AgentState) -> dict | None:
 
 async def synthesis_remote_node(state: AgentState) -> dict:
     """Remote synthesis path: privatize -> remote prompt -> restore tokens."""
-    bypass = _non_llm_synthesis_result(state)
+    bypass = await _non_llm_synthesis_result(state)
     if bypass is not None:
         return bypass
 
@@ -277,7 +299,7 @@ async def synthesis_remote_node(state: AgentState) -> dict:
 
 async def synthesis_local_node(state: AgentState) -> dict:
     """Local synthesis path: local prompt -> local LLM (no privacy tokenization)."""
-    bypass = _non_llm_synthesis_result(state)
+    bypass = await _non_llm_synthesis_result(state)
     if bypass is not None:
         return bypass
 
@@ -287,11 +309,22 @@ async def synthesis_local_node(state: AgentState) -> dict:
         context,
         state.get("user_context_username"),
     )
+    logger.info(
+        "\n\n[SYNTHESIS]\n"
+        "  Route: %s\n"
+        "  Query: %s\n"
+        "  Num Results: %d\n",
+        state.get("route", "unknown"),
+        state["query"],
+        len(results),
+    )
+    for r in results:
+        logger.info("  %s", _result_brief(r))
+
     prompt = SYNTHESIS_PROMPT.format(
         query=state["query"],
         context=context,
     )
-
     try:
         answer = await _local_client.generate(prompt)
     except Exception as exc:

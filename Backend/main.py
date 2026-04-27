@@ -38,28 +38,60 @@ try:
     @contextlib.asynccontextmanager
     async def lifespan(application: FastAPI):
         from .config import settings
-        # On startup: pull all activities from personal_assistant and sync to Neo4j
+        from collections import Counter
         personal_assistant_url = settings.personal_assistant_url
         username = settings.graphrag_username
         try:
             async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.get(
-                    f"{personal_assistant_url}/all_activities"
-                )
+                resp = await client.get(f"{personal_assistant_url}/all_activities")
                 if resp.status_code == 200:
                     activities = resp.json()
                     if activities:
-                        logger.info(
-                            "Startup sync: %d activities from personal_assistant.",
-                            len(activities),
-                        )
+                        # Infer username from activities if not already set
+                        if not username:
+                            candidate_names: list[str] = []
+                            for act in activities:
+                                if not isinstance(act, dict):
+                                    continue
+                                if str(act.get("source", "")) == "individual_chat":
+                                    for key in ("sender_name", "receiver_name"):
+                                        val = str(act.get(key, "") or "").strip()
+                                        if val:
+                                            candidate_names.append(val)
+                                else:
+                                    val = str(act.get("author_name") or act.get("account_username") or "").strip()
+                                    if val:
+                                        candidate_names.append(val)
+                            if candidate_names:
+                                username = Counter(candidate_names).most_common(1)[0][0]
+                                os.environ["GRAPHRAG_USERNAME"] = username
+                                logger.info("Startup sync: inferred username '%s'.", username)
+
+                        logger.info("Startup sync: %d activities from personal_assistant.", len(activities))
                         await ingest_activities(
-                            IngestRequest(username=username,
-                                          activities=activities)
+                            IngestRequest(username=username, activities=activities)
                         )
         except Exception as exc:
-            logger.warning(
-                "Startup sync failed (personal_assistant not ready?): %s", exc)
+            logger.warning("Startup sync failed (personal_assistant not ready?): %s", exc)
+
+        # Fallback: if username still unknown, infer from Neo4j (data already imported)
+        if not os.environ.get("GRAPHRAG_USERNAME"):
+            try:
+                from .services.vector_store import VectorStore
+                rows = VectorStore().run_query("""
+                    MATCH (u:User)
+                    OPTIONAL MATCH (u)-[:HAS_POST]->(p:Post)
+                    OPTIONAL MATCH (u)-[:HAS_MESSAGE]->(m:Message)
+                    WITH u.username AS username, count(DISTINCT p) + count(DISTINCT m) AS total
+                    WHERE total > 0 AND username IS NOT NULL AND username <> ""
+                    RETURN username ORDER BY total DESC LIMIT 1
+                """)
+                if rows:
+                    inferred = rows[0]["username"]
+                    os.environ["GRAPHRAG_USERNAME"] = inferred
+                    logger.info("Startup: inferred username '%s' from Neo4j.", inferred)
+            except Exception as exc:
+                logger.warning("Startup: Neo4j username inference failed: %s", exc)
         yield
 
     import os
@@ -292,14 +324,17 @@ try:
 
     @app.post("/query", response_model=QueryResponse)
     async def query_endpoint(req: QueryRequest) -> QueryResponse:
+        from .config import settings
+        user = req.user_context_username or settings.graphrag_username or os.environ.get("GRAPHRAG_USERNAME") or None
         state = {
             "query": req.query,
             "search_results": [],
-        }
-        if req.user_context_username:
-            state["user_context_username"] = req.user_context_username
+          }
+        if user:
+            state["user_context_username"] = user
         if req.llm_mode:
             state["llm_mode"] = req.llm_mode.strip().lower()
+
         result = await rag_graph.ainvoke(state)
         return QueryResponse(
             answer=result.get("answer", ""),
@@ -414,16 +449,47 @@ def _print_pipeline_debug(result: dict) -> None:
         print("=" * 70)
         print(restored_answer)
         print("=" * 70)
+        
+_CONFIRMATIONS = {"yes", "yeah", "yep", "yup", "sure", "ok", "okay", "y"}
 
+def _cli_source_preview(results: list[Any]) -> list[str]:
+    lines = []
+    for i, r in enumerate(results[:5], start=1):
+        result_type = getattr(r, "result_type", "unknown")
+        item_id = getattr(r, "item_id", "")
+        score = getattr(r, "score", 0.0)
+        metadata = getattr(r, "metadata", {}) or {}
+
+        if result_type == "message":
+            label = f"{metadata.get('sender_name', '')}->{metadata.get('receiver_name', '')}"
+        elif result_type == "thread":
+            thread = getattr(r, "thread", None)
+            label = f"participants={getattr(thread, 'participants', [])}"
+        elif result_type == "comment":
+            label = f"commenter={metadata.get('commenter_name', '')}"
+        elif result_type == "post":
+            post = getattr(r, "post", None)
+            label = f"author={getattr(post, 'account_username', '') if post else ''}"
+        else:
+            label = ""
+
+        lines.append(
+            f"  {i}. {result_type} | id={item_id} | score={score:.3f} | {label}"
+        )
+    return lines
 
 async def interactive_loop(
     user_context_username: str | None = None,
     debug_pipeline: bool = False,
     llm_mode: str | None = None,
 ) -> None:
+    import re as _re
     from .agents.graph import rag_graph
 
     print("\nWelcome to Parrot Agentic RAG. Type your query (Ctrl-C to exit)\n")
+
+    pending_correction: tuple[str, str] | None = None  # (original_query, corrected_query)
+
     while True:
         try:
             query = input("Query> ").strip()
@@ -433,6 +499,12 @@ async def interactive_loop(
 
         if not query:
             continue
+
+        # If the user confirms a "did you mean" suggestion, rerun with corrected query
+        if pending_correction and query.lower() in _CONFIRMATIONS:
+            query = pending_correction[1]
+            print(f"(Running: {query})")
+        pending_correction = None
 
         state = {
             "query": query,
@@ -445,14 +517,32 @@ async def interactive_loop(
         if debug_pipeline:
             state["debug_pipeline"] = True
         result = await rag_graph.ainvoke(state)
+        answer = result.get("answer", "<no answer>")
+
         if debug_pipeline:
             _print_pipeline_debug(result)
+
+        # Detect "did you mean" answer and store corrected query for next turn
+        m = _re.search(r"Did you mean one of these: \*\*(\w+)\*\*", answer)
+        if m:
+            suggestion = m.group(1)
+            original_partner = _re.search(r"\bwith\s+@?(\w+)\b", query, _re.IGNORECASE)
+            if original_partner:
+                corrected = _re.sub(
+                    r"@?" + _re.escape(original_partner.group(1)),
+                    suggestion,
+                    query,
+                    count=1,
+                    flags=_re.IGNORECASE,
+                )
+                pending_correction = (query, corrected)
         print(f"\n--- Answer ---")
-        print(result.get("answer", "<no answer>"))
-        print(
-            f"\n[Route: {result.get('route', '?')} | "
-            f"Sources: {len(result.get('search_results', []))}]\n"
-        )
+        print(answer)
+        sources = result.get("search_results", [])
+        print(f"\n[Route: {result.get('route', '?')} | Sources: {len(sources)}]")
+        for line in _cli_source_preview(sources):
+            print(line)
+        print()
 
 
 def _build_cli_parser() -> argparse.ArgumentParser:
@@ -536,22 +626,19 @@ def _run_import_if_requested(args: argparse.Namespace) -> bool:
 if __name__ == "__main__":
     cli_args = _build_cli_parser().parse_args()
     if not _run_import_if_requested(cli_args):
-# <<<<<<< HEAD
-#         asyncio.run(
-#             interactive_loop(
-#                 user_context_username=cli_args.username,
-#                 debug_pipeline=cli_args.debug_pipeline,
-#                 llm_mode=cli_args.llm_mode,
-#             )
-#         )
-# =======
-#         # Fall back to GRAPHRAG_USERNAME if the CLI arg --username isn't provided
-#         context_user = cli_args.username or os.environ.get(
-#             "GRAPHRAG_USERNAME") or None
-#         asyncio.run(interactive_loop(user_context_username=context_user))
-# >>>>>>> upstream/main
-        # Fall back to GRAPHRAG_USERNAME if the CLI arg --username isn't provided
         context_user = cli_args.username or os.environ.get("GRAPHRAG_USERNAME") or None
+        if not context_user:
+            try:
+                import httpx as _httpx
+                from .config import settings as _settings
+                resp = _httpx.get(f"{_settings.personal_assistant_url}/me", timeout=5)
+                if resp.status_code == 200:
+                    context_user = resp.json().get("username") or None
+                    if context_user:
+                        logger.info("CLI: got username '%s' from personal_assistant.", context_user)
+            except Exception as exc:
+                logger.warning("CLI: personal_assistant /me failed: %s", exc)
+
         asyncio.run(
             interactive_loop(
                 user_context_username=context_user,

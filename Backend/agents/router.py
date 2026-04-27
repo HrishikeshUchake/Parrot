@@ -36,19 +36,41 @@ async def router_node(state: AgentState) -> dict:
     if requires_graph:
         route = "analytics"
         logger.info(
-            "Router decision: %s (requires_graph=%s, analytics_kind=%s, intent=%s, complexity=%s)",
+            "\n\n[ROUTER]\n"
+            "  Route: %s\n"
+            "  Reason: requires_graph_traversal\n"
+            "  Intent: %s\n"
+            "  Complexity: %s\n"
+            "  Requires Graph: %s\n"
+            "  Analytics Kind: %s\n"
+            "  Sub Queries: %s\n",
             route,
-            requires_graph,
-            analytics_kind,
             intent,
             complexity,
+            requires_graph,
+            analytics_kind,
+            sub_queries,
         )
         return {"route": route}
 
     if intent == "analytics":
         route = "analytics"
-        logger.info("Router decision: %s (intent=%s, complexity=%s)",
-                    route, intent, complexity)
+        logger.info(
+            "\n\n[ROUTER]\n"
+            "  Route: %s\n"
+            "  Reason: intent_is_analytics\n"
+            "  Intent: %s\n"
+            "  Complexity: %s\n"
+            "  Requires Graph: %s\n"
+            "  Analytics Kind: %s\n"
+            "  Sub Queries: %s\n",
+            route,
+            intent,
+            complexity,
+            requires_graph,
+            analytics_kind,
+            sub_queries,
+        )
         return {"route": route}
 
     # Deterministic routing based on query analysis
@@ -71,8 +93,22 @@ async def router_node(state: AgentState) -> dict:
                 "Router LLM call failed: %s defaulting simple", exc)
             route = "simple"
 
-    logger.info("Router decision: %s (intent=%s, complexity=%s)",
-                route, intent, complexity)
+    logger.info(
+        "\n\n[ROUTER]\n"
+        "  Route: %s\n"
+        "  Reason: standard_route_decision\n"
+        "  Intent: %s\n"
+        "  Complexity: %s\n"
+        "  Requires Graph: %s\n"
+        "  Analytics Kind: %s\n"
+        "  Sub Queries: %s\n",
+        route,
+        intent,
+        complexity,
+        requires_graph,
+        analytics_kind,
+        sub_queries,
+    )
     return {"route": route}
 
 

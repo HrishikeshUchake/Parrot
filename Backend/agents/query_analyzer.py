@@ -10,6 +10,11 @@ from ..llm.llm_provider import get_node_llm_provider, get_llm_provider_for_backe
 from ..llm.prompts import QUERY_ANALYSIS_PROMPT
 
 logger = logging.getLogger(__name__)
+
+def _truncate(text: str, n: int = 120) -> str:
+    text = (text or "").replace("\n", " ").strip()
+    return text if len(text) <= n else text[:n] + "..."
+
 _client = get_node_llm_provider("query_analyzer")
 
 
@@ -22,51 +27,8 @@ def _resolve_llm_client(state: AgentState):
     return _client
 
 
-_ANALYTICS_PATTERNS = [
-    "message the most",
-    "text the most",
-    "texts the most",
-    "messages usually discuss",
-    "engage with my posts",
-    "engages with my posts",
-    "main topics i post",
-    "themes appear most",
-    "topics appear most",
-    "top topics",
-    "top themes",
-]
-
-_TREND_PATTERNS = [
-    "trend",
-    "over time",
-    "over the last",
-    "month over month",
-    "week over week",
-    "daily",
-    "weekly",
-    "monthly",
-    "change over",
-    "increasing",
-    "decreasing",
-    "growth",
-    "decline",
-]
-
-
-def _is_analytics_query(query: str) -> bool:
-    q = (query or "").lower()
-    return any(p in q for p in _ANALYTICS_PATTERNS)
-
-
-def _is_trend_query(query: str) -> bool:
-    q = (query or "").lower()
-    return any(p in q for p in _TREND_PATTERNS)
-
-
-def _requires_graph_traversal(query: str, intent: str) -> bool:
-    if intent in {"analytics", "trend_analysis"}:
-        return True
-    return _is_analytics_query(query) or _is_trend_query(query)
+def _requires_graph_traversal(intent: str, analytics_kind: str) -> bool:
+    return intent in {"analytics", "trend_analysis"} or analytics_kind in {"aggregate", "trend"}
 
 
 def _parse_date_range(date_str: str) -> tuple[str, str] | None:
@@ -146,17 +108,12 @@ async def query_analyzer_node(state: AgentState) -> dict:
     intent = analysis.get("intent", "open_ended")
     complexity = analysis.get("complexity", "simple")
     sub_queries = analysis.get("sub_queries", [])
-    is_analytics = _is_analytics_query(query)
-    is_trend = intent == "trend_analysis" or _is_trend_query(query)
-    requires_graph_traversal = _requires_graph_traversal(query, intent)
-    analytics_kind = "none"
+    analytics_kind = analysis.get("analytics_kind", "none")
+    aggregate_query_type = analysis.get("aggregate_query_type", "none")
 
-    # Override uncertain LLM classifications for aggregate social analytics queries.
-    if is_analytics:
-        intent = "analytics"
-        complexity = "complex"
-        if not sub_queries:
-            sub_queries = [query]
+    is_analytics = intent == "analytics" or analytics_kind in {"aggregate", "trend"}
+    is_trend = intent == "trend_analysis" or analytics_kind == "trend"
+    requires_graph_traversal = _requires_graph_traversal(intent, analytics_kind)
 
     if is_trend:
         analytics_kind = "trend"
@@ -165,9 +122,36 @@ async def query_analyzer_node(state: AgentState) -> dict:
             sub_queries = [query]
     elif is_analytics:
         analytics_kind = "aggregate"
+        complexity = "complex"
+        if not sub_queries:
+            sub_queries = [query]
 
     if requires_graph_traversal and not sub_queries:
         sub_queries = [query]
+
+    logger.info(
+        "\n\n[QUERY_ANALYZER]\n"
+        "  Query: %s\n"
+        "  Intent: %s\n"
+        "  Entities: %s\n"
+        "  Filters: %s\n"
+        "  Date Filter: %s\n"
+        "  Sub Queries: %s\n"
+        "  Complexity: %s\n"
+        "  Requires Graph: %s\n"
+        "  Analytics Kind: %s\n"
+        "  Aggregate Type: %s\n",
+        _truncate(query),
+        intent,
+        analysis.get("entities", []),
+        filters,
+        date_filter,
+        sub_queries,
+        complexity,
+        requires_graph_traversal,
+        analytics_kind,
+        aggregate_query_type,
+    )
 
     return {
         "intent": intent,
@@ -179,4 +163,5 @@ async def query_analyzer_node(state: AgentState) -> dict:
         "complexity": complexity,
         "requires_graph_traversal": requires_graph_traversal,
         "analytics_kind": analytics_kind,
+        "aggregate_query_type": aggregate_query_type,
     }
