@@ -831,6 +831,15 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
     if state["query"] not in queries:
         queries = [state["query"]] + queries
     user_context = _extract_user_context(state)
+    query_embedding = _embedder.encode(state["query"]) if user_context else None
+
+    cached = _try_retrieval_cache(
+        state=state,
+        user_context=user_context,
+        query_embedding=query_embedding,
+    )
+    if cached is not None:
+        return cached
 
     # For summary intent with a named entity, filter messages to that conversation partner
     conversation_partner: str | None = None
@@ -877,7 +886,7 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
     if user_context:
         # Add semantic matches from user messages/comments/threads for each sub-query.
         for q in queries:
-            emb = _embedder.encode(q)
+            emb = query_embedding if q == state["query"] and query_embedding is not None else _embedder.encode(q)
             for h in _store.similarity_search_messages(
                 query_embedding=emb,
                 username=user_context,
@@ -976,7 +985,18 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
     )
     for line in _result_debug_summary(results):
         logger.info("  %s", line)
-    return {"search_results": results}
+    _save_retrieval_cache(
+        state=state,
+        user_context=user_context,
+        search_results=results,
+        analytics_payload=None,
+        query_embedding=query_embedding,
+    )
+
+    return {
+        "search_results": results,
+        "cache_hit": False,
+    }
 
 
 async def analytics_retrieval_node(state: AgentState) -> dict:
