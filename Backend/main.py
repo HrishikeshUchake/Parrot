@@ -100,6 +100,7 @@ try:
     class QueryRequest(BaseModel):
         query: str
         user_context_username: str | None = None
+        session_id: str | None = None
 
     class QueryResponse(BaseModel):
         answer: str
@@ -328,6 +329,7 @@ try:
         state = {
             "query": req.query,
             "search_results": [],
+            "session_id": req.session_id or "default",
         }
         if user:
             state["user_context_username"] = user
@@ -407,6 +409,7 @@ async def interactive_loop(user_context_username: str | None = None) -> None:
         state = {
             "query": query,
             "search_results": [],
+            "session_id": "cli",
         }
         if user_context_username:
             state["user_context_username"] = user_context_username

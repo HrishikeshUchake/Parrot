@@ -10,6 +10,7 @@ class AgentState(TypedDict):
     # ── Input
     query: str
     user_context_username: NotRequired[str]
+    session_id: NotRequired[str]
 
     # ── After QueryAnalyzer
     intent: str
@@ -29,6 +30,9 @@ class AgentState(TypedDict):
     # ── After Retrieval (reducer accumulates across branches)
     search_results: Annotated[list[SearchResult], operator.add]
     analytics_payload: NotRequired[dict]
+    cache_hit: NotRequired[bool]
+    cache_hit_type: NotRequired[str]
+    cache_similarity: NotRequired[float]
 
     # ── After Synthesis
     answer: str
