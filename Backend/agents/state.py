@@ -10,8 +10,9 @@ class AgentState(TypedDict):
     # ── Input
     query: str
     user_context_username: NotRequired[str]
+    llm_mode: NotRequired[str]              # "remote" | "local"
+    debug_pipeline: NotRequired[bool]
     session_id: NotRequired[str]
-
     # ── After QueryAnalyzer
     intent: str
     entities: list[str]
@@ -37,6 +38,7 @@ class AgentState(TypedDict):
     # ── After Synthesis
     answer: str
     reasoning: str
+    privacy_debug: NotRequired[dict]
 
     # ── Error channel
     error: str

@@ -46,10 +46,26 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o-mini"
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2"           # model tag pulled in Ollama
-    llm_temperature: float = 0.1
+
+    # --- OpenRouter / Remote LLM ---
+    openrouter_api_key: str = ""             # Set OPENROUTER_API_KEY env var
+    # openrouter_model: str = "deepseek/deepseek-chat-v3-0324"  # or other models
+    openrouter_model: str = "gtp-4o-mini"  # or other models
+
+    # --- OpenAI / Remote LLM ---
+    openai_api_key: str = ""                 # Set OPENAI_API_KEY env var
+    openai_model: str = "gpt-4o-mini"       # OpenAI model name
+
+    # --- LLM Common Settings ---
+    llm_temperature: float = 0.2
     llm_max_tokens: int = 1024
 
-    # --- Retrieval ---
+    # --- LLM Provider Selection ---
+    llm_provider: str = "openrouter"         # "ollama" or "openrouter"
+
+    # --- Privacy & Anonymization ---
+    privacy_enabled: bool = True
+    privacy_anonymizer: str = "presidio"     # "presidio" or "noop"
     default_top_k: int = 5
     advanced_top_k: int = 15
     similarity_threshold: float = 0.40       # cosine similarity floor

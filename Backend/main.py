@@ -15,10 +15,10 @@ from typing import Any
 
 load_dotenv(Path(__file__).parent / ".env")
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(levelname)s | %(name)s | %(message)s",
-)
+# logging.basicConfig(
+#     level=logging.INFO,
+#     format="%(levelname)s | %(name)s | %(message)s",
+# )
 logger = logging.getLogger(__name__)
 
 # Suppress Neo4j driver schema warnings for missing nodes/properties
@@ -100,8 +100,8 @@ try:
     class QueryRequest(BaseModel):
         query: str
         user_context_username: str | None = None
+        llm_mode: str | None = None
         session_id: str | None = None
-
     class QueryResponse(BaseModel):
         answer: str
         route: str
@@ -224,19 +224,19 @@ try:
     @app.post("/deposit_social_activities", response_model=IngestResponse)
     async def deposit_social_activities(payload: Any = Body(None)) -> IngestResponse:
         from .config import settings
-        # Backward-compatible endpoint for clients posting to /deposit_social_activities.
-        username = os.environ.get("GRAPHRAG_USERNAME", "").strip()
+        # Don't default to the old env var, so we can infer the new one from the payload
+        username = ""
 
         activities: list[dict] = []
 
         if isinstance(payload, list):
             activities = [x for x in payload if isinstance(x, dict)]
         elif isinstance(payload, dict):
-            username = (
+            username = str(
                 payload.get("username")
                 or payload.get("user_context_username")
-                or username
-            )
+                or ""
+            ).strip()
 
             candidate = payload.get("activities")
             if isinstance(candidate, list):
@@ -300,7 +300,8 @@ try:
             else:
                 username = "me"
 
-            # Save the resolved username to .env so the CLI can pick it up automatically
+        # Save the resolved username to .env so the CLI can pick it up automatically
+        if username:
             env_path = Path(__file__).parent / ".env"
             import re
             if env_path.exists():
@@ -315,7 +316,7 @@ try:
                 env_path.write_text(content, "utf-8")
             else:
                 env_path.write_text(f"GRAPHRAG_USERNAME={username}\n", "utf-8")
-
+            
             os.environ["GRAPHRAG_USERNAME"] = username
 
         return await ingest_activities(
@@ -329,10 +330,14 @@ try:
         state = {
             "query": req.query,
             "search_results": [],
+            "search_results": [],
             "session_id": req.session_id or "default",
         }
         if user:
             state["user_context_username"] = user
+        if req.llm_mode:
+            state["llm_mode"] = req.llm_mode.strip().lower()
+
         result = await rag_graph.ainvoke(state)
         return QueryResponse(
             answer=result.get("answer", ""),
@@ -354,6 +359,100 @@ except ImportError as e:
 
 
 # ── Interactive CLI ────────────────────────────────────────────────────────────
+def _print_pipeline_debug(result: dict) -> None:
+    """Print a concise trace of analyzer, router, and retrieval outputs."""
+    print("\n--- Pipeline Debug ---")
+    print(
+        "Analyzer: "
+        f"intent={result.get('intent', '?')} | "
+        f"complexity={result.get('complexity', '?')} | "
+        f"analytics_kind={result.get('analytics_kind', 'none')}"
+    )
+
+    entities = result.get("entities") or []
+    if entities:
+        print(f"Entities: {entities}")
+
+    filters = result.get("filters") or {}
+    if filters:
+        print(f"Filters: {filters}")
+
+    sub_queries = result.get("sub_queries") or []
+    if sub_queries:
+        print(f"Sub-queries: {sub_queries}")
+
+    print(f"Router: route={result.get('route', '?')}")
+    if result.get("llm_mode"):
+        print(f"LLM mode: {result.get('llm_mode')}")
+
+    analytics_payload = result.get("analytics_payload")
+    if analytics_payload:
+        print(
+            "Analytics payload: "
+            f"kind={analytics_payload.get('kind', '?')} | "
+            f"query_type={analytics_payload.get('query_type', '?')}"
+        )
+        print(f"Analytics summary: {analytics_payload.get('summary', '')}")
+
+    results = result.get("search_results") or []
+    print(f"Retrieved items: {len(results)}")
+    for i, item in enumerate(results[:5], 1):
+        kind = getattr(item, "result_type", "unknown")
+        score = getattr(item, "score", 0.0)
+        if kind == "post" and getattr(item, "post", None) is not None:
+            post = item.post
+            author = post.account_acct or post.account_username or "unknown"
+            preview = (post.content or "").replace("\n", " ")[:300]
+            print(f"  {i}. post | score={score:.3f} | @{author} | {preview}")
+        else:
+            content = (getattr(item, "content", "") or "").replace("\n", " ")[:300]
+            print(f"  {i}. {kind} | score={score:.3f} | {content}")
+
+    reasoning = result.get("reasoning")
+    if reasoning:
+        print(f"Reasoning: {reasoning}")
+
+    privacy_debug = result.get("privacy_debug") or {}
+    if privacy_debug:
+        print(
+            "Privacy: "
+            f"enabled={privacy_debug.get('privacy_enabled')} | "
+            f"anonymizer={privacy_debug.get('privacy_anonymizer')} | "
+            f"engine={privacy_debug.get('privatizer_class')} | "
+            f"pii_detected={privacy_debug.get('pii_detected')}"
+        )
+        mappings = privacy_debug.get("mappings") or {}
+        if mappings:
+            print("PII mappings:")
+            for token, original in mappings.items():
+                print(f"  {token} -> {original!r}")
+
+    anonymized_context = privacy_debug.get("anonymized_context")
+    remote_prompt = privacy_debug.get("remote_prompt")
+    anonymized_answer = privacy_debug.get("anonymized_answer")
+    restored_answer = result.get("answer")
+
+    if anonymized_context is not None:
+        print("\nAnonymized context sent to remote LLM:")
+        print("=" * 70)
+        print(anonymized_context)
+        print("=" * 70)
+    if remote_prompt is not None:
+        print("\nFull remote prompt sent to remote LLM:")
+        print("=" * 70)
+        print(remote_prompt)
+        print("=" * 70)
+    if anonymized_answer is not None:
+        print("\nPrivatized retrieved response (anonymized answer):")
+        print("=" * 70)
+        print(anonymized_answer)
+        print("=" * 70)
+    if restored_answer is not None:
+        print("\nDeanonymized retrieved answer:")
+        print("=" * 70)
+        print(restored_answer)
+        print("=" * 70)
+        
 _CONFIRMATIONS = {"yes", "yeah", "yep", "yup", "sure", "ok", "okay", "y"}
 
 def _cli_source_preview(results: list[Any]) -> list[str]:
@@ -382,7 +481,11 @@ def _cli_source_preview(results: list[Any]) -> list[str]:
         )
     return lines
 
-async def interactive_loop(user_context_username: str | None = None) -> None:
+async def interactive_loop(
+    user_context_username: str | None = None,
+    debug_pipeline: bool = False,
+    llm_mode: str | None = None,
+) -> None:
     import re as _re
     from .agents.graph import rag_graph
 
@@ -413,14 +516,20 @@ async def interactive_loop(user_context_username: str | None = None) -> None:
         }
         if user_context_username:
             state["user_context_username"] = user_context_username
+        if llm_mode:
+            state["llm_mode"] = llm_mode
+        if debug_pipeline:
+            state["debug_pipeline"] = True
         result = await rag_graph.ainvoke(state)
         answer = result.get("answer", "<no answer>")
+
+        if debug_pipeline:
+            _print_pipeline_debug(result)
 
         # Detect "did you mean" answer and store corrected query for next turn
         m = _re.search(r"Did you mean one of these: \*\*(\w+)\*\*", answer)
         if m:
             suggestion = m.group(1)
-            # Only rebuild if we can find a clear "with @name" pattern to replace
             original_partner = _re.search(r"\bwith\s+@?(\w+)\b", query, _re.IGNORECASE)
             if original_partner:
                 corrected = _re.sub(
@@ -431,7 +540,6 @@ async def interactive_loop(user_context_username: str | None = None) -> None:
                     flags=_re.IGNORECASE,
                 )
                 pending_correction = (query, corrected)
-
         print(f"\n--- Answer ---")
         print(answer)
         sources = result.get("search_results", [])
@@ -464,6 +572,17 @@ def _build_cli_parser() -> argparse.ArgumentParser:
         "--messages",
         default="messages.jsonl",
         help="Path to messages JSONL",
+    )
+    parser.add_argument(
+        "--debug-pipeline",
+        action="store_true",
+        help="Print query analyzer, router, and retrieval details for each query",
+    )
+    parser.add_argument(
+        "--llm-mode",
+        choices=["remote", "local"],
+        default=None,
+        help="Choose synthesis mode explicitly: remote (privacy + remote prompt) or local",
     )
     return parser
 
@@ -523,4 +642,11 @@ if __name__ == "__main__":
                         logger.info("CLI: got username '%s' from personal_assistant.", context_user)
             except Exception as exc:
                 logger.warning("CLI: personal_assistant /me failed: %s", exc)
-        asyncio.run(interactive_loop(user_context_username=context_user))
+
+        asyncio.run(
+            interactive_loop(
+                user_context_username=context_user,
+                debug_pipeline=cli_args.debug_pipeline,
+                llm_mode=cli_args.llm_mode,
+            )
+        )

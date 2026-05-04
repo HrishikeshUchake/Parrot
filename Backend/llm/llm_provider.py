@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import Protocol
 
 from httpx import AsyncClient, Timeout
@@ -19,12 +20,10 @@ class OpenAIProvider:
         self.base_url = settings.openai_base_url
         self.model = settings.openai_model
         self._client = AsyncClient(timeout=Timeout(15.0))
-        self._fallback = OllamaClient()
 
     async def generate(self, prompt: str, system: str = "") -> str:
         if not self.api_key:
-            logger.warning("OpenAI API key not set, falling back to Ollama")
-            return await self._fallback.generate(prompt, system=system)
+            raise RuntimeError("OPENAI_API_KEY is not set for remote synthesis mode")
 
         try:
             headers = {"Authorization": f"Bearer {self.api_key}"}
@@ -46,9 +45,8 @@ class OpenAIProvider:
             data = response.json()
             return data["choices"][0]["message"]["content"]
         except Exception as e:
-            logger.warning(
-                f"Remote LLM failed: {e}. Falling back to local Ollama.")
-            return await self._fallback.generate(prompt, system=system)
+            logger.error("Remote LLM failed: %s", e)
+            raise
 
 
 def get_llm_provider() -> LLMProvider:
@@ -74,5 +72,19 @@ def get_node_llm_provider(node_name: str) -> LLMProvider:
         "router": settings.router_llm_backend,
         "synthesis": settings.synthesis_llm_backend,
     }
+    env_var_map = {
+        "query_analyzer": "ANALYZER_LLM_BACKEND",
+        "analyzer": "ANALYZER_LLM_BACKEND",
+        "router": "ROUTER_LLM_BACKEND",
+        "synthesis": "SYNTHESIS_LLM_BACKEND",
+    }
+
     backend = backend_map.get(node_key, settings.llm_backend)
+
+    # If a node-specific backend wasn't explicitly set in environment,
+    # inherit the global backend to avoid surprising defaults.
+    node_env_var = env_var_map.get(node_key)
+    if node_env_var and not os.getenv(node_env_var):
+        backend = settings.llm_backend
+
     return get_llm_provider_for_backend(backend)
