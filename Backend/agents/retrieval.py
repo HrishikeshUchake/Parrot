@@ -13,6 +13,11 @@ from ..services.embedding_service import EmbeddingService
 from ..services.search_engine import HybridSearchEngine
 from ..services.vector_store import VectorStore
 
+from ..services.session_cache import (
+    build_structured_cache_key,
+    session_retrieval_cache,
+)
+
 logger = logging.getLogger(__name__)
 _engine = HybridSearchEngine()
 _store = VectorStore()
@@ -67,6 +72,73 @@ def _result_debug_summary(results: list[SearchResult]) -> list[str]:
                 f"{i}. type={r.result_type} | id={r.item_id} | score={r.score:.3f}"
             )
     return lines
+
+def _get_session_id(state: AgentState) -> str:
+    return state.get("session_id") or "default"
+
+
+def _try_retrieval_cache(
+    state: AgentState,
+    user_context: str,
+    query_embedding: list[float] | None = None,
+):
+    session_id = _get_session_id(state)
+    structured_key = build_structured_cache_key(state, user_context)
+
+    cached = session_retrieval_cache.get(
+        session_id=session_id,
+        query=state["query"],
+        structured_key=structured_key,
+        query_embedding=query_embedding,
+    )
+
+    if cached is None:
+        return None
+
+    logger.info(
+        "\n\n[RETRIEVAL_CACHE]\n"
+        "  Status: HIT\n"
+        "  Hit Type: %s\n"
+        "  Similarity: %s\n"
+        "  Session: %s\n"
+        "  Query: %s\n"
+        "  Action: skipped Neo4j/database retrieval\n",
+        cached.hit_type,
+        f"{cached.similarity:.3f}" if cached.similarity is not None else "n/a",
+        session_id,
+        _short(state["query"]),
+    )
+
+    return {
+        "search_results": cached.search_results,
+        "analytics_payload": cached.analytics_payload,
+        "cache_hit": True,
+        "cache_hit_type": cached.hit_type,
+        "cache_similarity": cached.similarity or 0.0,
+    }
+
+
+def _save_retrieval_cache(
+    state: AgentState,
+    user_context: str,
+    search_results: list[SearchResult],
+    analytics_payload: dict | None = None,
+    query_embedding: list[float] | None = None,
+) -> None:
+    session_id = _get_session_id(state)
+    structured_key = build_structured_cache_key(state, user_context)
+
+    session_retrieval_cache.set(
+        session_id=session_id,
+        query=state["query"],
+        structured_key=structured_key,
+        query_embedding=query_embedding,
+        user_context_username=user_context,
+        route=state.get("route", ""),
+        intent=state.get("intent", ""),
+        search_results=search_results,
+        analytics_payload=analytics_payload,
+    )
 
 
 def _extract_user_context(state: AgentState) -> str:
@@ -610,6 +682,16 @@ async def simple_retrieval_node(state: AgentState) -> dict:
     """Vector + keyword hybrid search for a single query."""
     user_context = _extract_user_context(state)
 
+    query_embedding = _embedder.encode(state["query"]) if user_context else None
+
+    cached = _try_retrieval_cache(
+        state=state,
+        user_context=user_context,
+        query_embedding=query_embedding,
+    )
+    if cached is not None:
+        return cached
+
     # Handle identity queries directly from user context
     if state.get("intent") == "identity":
         if user_context:
@@ -705,8 +787,7 @@ async def simple_retrieval_node(state: AgentState) -> dict:
     )
 
     # Add user-scoped message/comment semantic hits if user context is available.
-    if user_context:
-        query_embedding = _embedder.encode(state["query"])
+    if user_context and query_embedding is not None:
         message_hits = _store.similarity_search_messages(
             query_embedding=query_embedding,
             username=user_context,
@@ -744,7 +825,18 @@ async def simple_retrieval_node(state: AgentState) -> dict:
     )
     for line in _result_debug_summary(results):
         logger.info("  %s", line)
-    return {"search_results": results}
+    _save_retrieval_cache(
+        state=state,
+        user_context=user_context,
+        search_results=results,
+        analytics_payload=None,
+        query_embedding=query_embedding,
+    )
+
+    return {
+        "search_results": results,
+        "cache_hit": False,
+    }
 
 
 async def advanced_retrieval_node(state: AgentState) -> dict:
@@ -767,6 +859,15 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
     if state["query"] not in queries:
         queries = [state["query"]] + queries
     user_context = _extract_user_context(state)
+    query_embedding = _embedder.encode(state["query"]) if user_context else None
+
+    cached = _try_retrieval_cache(
+        state=state,
+        user_context=user_context,
+        query_embedding=query_embedding,
+    )
+    if cached is not None:
+        return cached
 
     # For summary intent with a named entity, filter messages to that conversation partner
     conversation_partners: list[str] = []
@@ -835,7 +936,7 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
     if user_context:
         # Add semantic matches from user messages/comments/threads for each sub-query.
         for q in queries:
-            emb = _embedder.encode(q)
+            emb = query_embedding if q == state["query"] and query_embedding is not None else _embedder.encode(q)
             for h in _store.similarity_search_messages(
                 query_embedding=emb,
                 username=user_context,
@@ -934,7 +1035,18 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
     )
     for line in _result_debug_summary(results):
         logger.info("  %s", line)
-    return {"search_results": results}
+    _save_retrieval_cache(
+        state=state,
+        user_context=user_context,
+        search_results=results,
+        analytics_payload=None,
+        query_embedding=query_embedding,
+    )
+
+    return {
+        "search_results": results,
+        "cache_hit": False,
+    }
 
 
 async def analytics_retrieval_node(state: AgentState) -> dict:
@@ -942,6 +1054,14 @@ async def analytics_retrieval_node(state: AgentState) -> dict:
     query = (state.get("query") or "").lower()
     user_context = _extract_user_context(state)
     analytics_kind = state.get("analytics_kind", "none")
+
+    cached = _try_retrieval_cache(
+        state=state,
+        user_context=user_context,
+        query_embedding=None,
+    )
+    if cached is not None:
+        return cached
 
     if not user_context:
         payload = {
@@ -975,8 +1095,19 @@ async def analytics_retrieval_node(state: AgentState) -> dict:
     for line in _analytics_debug_lines(payload):
         logger.info("  %s", line)
 
-    return {
+    result = {
         "search_results": [],
         "analytics_payload": payload,
         "answer": payload.get("summary", ""),
+        "cache_hit": False,
     }
+
+    _save_retrieval_cache(
+        state=state,
+        user_context=user_context,
+        search_results=[],
+        analytics_payload=payload,
+        query_embedding=None,
+    )
+
+    return result

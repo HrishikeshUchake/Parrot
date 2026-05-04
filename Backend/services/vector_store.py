@@ -10,6 +10,24 @@ from ..config import settings
 
 logger = logging.getLogger(__name__)
 
+def _log_cypher(label: str, cypher: str, params: dict[str, Any] | None = None) -> None:
+    cleaned = "\n".join(line.rstrip() for line in cypher.strip().splitlines())
+
+    safe_params = {}
+    if params:
+        for k, v in params.items():
+            if k == "embedding":
+                safe_params[k] = f"[{len(v)} dims]"   # 👈 THIS LINE FIXES EVERYTHING
+            else:
+                safe_params[k] = v
+
+    logger.info(
+        "\n\n[CYPHER_QUERY | %s]\n%s\nPARAMS: %s\n",
+        label,
+        cleaned,
+        safe_params,
+    )
+
 _CREATE_VECTOR_INDEX = """
     CREATE VECTOR INDEX {index} IF NOT EXISTS
     FOR (p:Post) ON (p.embedding)
@@ -405,6 +423,8 @@ class VectorStore:
             )
         else:
             cypher = _VECTOR_SEARCH
+        
+        _log_cypher("similarity_search", cypher, params)
 
         with self._driver.session(database=self._db) as session:
             records = session.run(cypher, **params).data()
@@ -449,6 +469,8 @@ class VectorStore:
             "username": username,
             "partners": partners or [],
         }
+        _log_cypher("similarity_search_messages", _MESSAGE_VECTOR_SEARCH, params)
+        
         with self._driver.session(database=self._db) as session:
             records = session.run(_MESSAGE_VECTOR_SEARCH, **params).data()
 
@@ -482,6 +504,8 @@ class VectorStore:
             "embedding": query_embedding,
             "username": username,
         }
+        _log_cypher("similarity_search_comments", _COMMENT_VECTOR_SEARCH, params)
+
         with self._driver.session(database=self._db) as session:
             records = session.run(_COMMENT_VECTOR_SEARCH, **params).data()
 
@@ -553,8 +577,12 @@ class VectorStore:
             ORDER BY shared_tags DESC
             LIMIT 10
         """
+        params = {"id": str(post_id)}
+
+        _log_cypher("graph_neighbors", cypher, params)
+        
         with self._driver.session(database=self._db) as session:
-            return session.run(cypher, id=str(post_id)).data()
+            return session.run(cypher, **params).data()
 
     # ------------------------------------------------------------------
     def batch_upsert_user_data(
@@ -675,6 +703,8 @@ class VectorStore:
             "embedding": query_embedding,
             "username": username,
         }
+        _log_cypher("similarity_search_threads", _THREAD_CHUNK_VECTOR_SEARCH, params)
+
         with self._driver.session(database=self._db) as session:
             records = session.run(_THREAD_CHUNK_VECTOR_SEARCH, **params).data()
 
@@ -716,17 +746,24 @@ class VectorStore:
 
     def run_query(self, cypher: str, **params: Any) -> list[dict[str, Any]]:
         """Execute a read query against Neo4j and return all rows as dicts."""
+        _log_cypher("run_query", cypher, params)
+
         with self._driver.session(database=self._db) as session:
             return session.run(cypher, **params).data()
 
     @property
     def count(self) -> int:
+        _log_cypher("count", _COUNT_POSTS, {})
+
         with self._driver.session(database=self._db) as session:
             result = session.run(_COUNT_POSTS).single()
             return result["n"] if result else 0
 
     def count_for_user(self, username: str) -> int:
+        params = {"username": username}
+
+        _log_cypher("count_for_user", _COUNT_POSTS_BY_USER, params)
+
         with self._driver.session(database=self._db) as session:
-            result = session.run(_COUNT_POSTS_BY_USER,
-                                 username=username).single()
+            result = session.run(_COUNT_POSTS_BY_USER, **params).single()
             return result["n"] if result else 0

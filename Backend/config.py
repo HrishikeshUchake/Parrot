@@ -72,6 +72,11 @@ class Settings(BaseSettings):
     analytics_default_trend_days: int = 90
     analytics_bucket_days: int = 7
     analytics_top_entities: int = 10
+    
+    # --- Session retrieval cache ---
+    session_cache_enabled: bool = True
+    session_cache_max_entries: int = 50
+    session_cache_semantic_threshold: float = 0.92
 
     # --- User data ingestion ---
     user_data_import_batch_size: int = 64

@@ -101,7 +101,7 @@ try:
         query: str
         user_context_username: str | None = None
         llm_mode: str | None = None
-
+        session_id: str | None = None
     class QueryResponse(BaseModel):
         answer: str
         route: str
@@ -330,7 +330,9 @@ try:
         state = {
             "query": req.query,
             "search_results": [],
-          }
+            "search_results": [],
+            "session_id": req.session_id or "default",
+        }
         if user:
             state["user_context_username"] = user
         if req.llm_mode:
@@ -510,6 +512,7 @@ async def interactive_loop(
         state = {
             "query": query,
             "search_results": [],
+            "session_id": "cli",
         }
         if user_context_username:
             state["user_context_username"] = user_context_username
