@@ -28,7 +28,8 @@ def _resolve_llm_client(state: AgentState):
 
 
 def _requires_graph_traversal(intent: str, analytics_kind: str) -> bool:
-    return intent in {"analytics", "trend_analysis"} or analytics_kind in {"aggregate", "trend"}
+    return intent in {"analytics", "trend_analysis"} 
+# or analytics_kind in {"aggregate", "trend"}
 
 
 def _parse_date_range(date_str: str) -> tuple[str, str] | None:
@@ -111,7 +112,7 @@ async def query_analyzer_node(state: AgentState) -> dict:
     analytics_kind = analysis.get("analytics_kind", "none")
     aggregate_query_type = analysis.get("aggregate_query_type", "none")
 
-    is_analytics = intent == "analytics" or analytics_kind in {"aggregate", "trend"}
+    is_analytics = intent == "analytics" and analytics_kind in {"aggregate", "trend"}
     is_trend = intent == "trend_analysis" or analytics_kind == "trend"
     requires_graph_traversal = _requires_graph_traversal(intent, analytics_kind)
 

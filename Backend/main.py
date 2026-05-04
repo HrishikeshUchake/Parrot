@@ -15,10 +15,10 @@ from typing import Any
 
 load_dotenv(Path(__file__).parent / ".env")
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(levelname)s | %(name)s | %(message)s",
-)
+# logging.basicConfig(
+#     level=logging.INFO,
+#     format="%(levelname)s | %(name)s | %(message)s",
+# )
 logger = logging.getLogger(__name__)
 
 # Suppress Neo4j driver schema warnings for missing nodes/properties
@@ -224,19 +224,19 @@ try:
     @app.post("/deposit_social_activities", response_model=IngestResponse)
     async def deposit_social_activities(payload: Any = Body(None)) -> IngestResponse:
         from .config import settings
-        # Backward-compatible endpoint for clients posting to /deposit_social_activities.
-        username = os.environ.get("GRAPHRAG_USERNAME", "").strip()
+        # Don't default to the old env var, so we can infer the new one from the payload
+        username = ""
 
         activities: list[dict] = []
 
         if isinstance(payload, list):
             activities = [x for x in payload if isinstance(x, dict)]
         elif isinstance(payload, dict):
-            username = (
+            username = str(
                 payload.get("username")
                 or payload.get("user_context_username")
-                or username
-            )
+                or ""
+            ).strip()
 
             candidate = payload.get("activities")
             if isinstance(candidate, list):
@@ -300,7 +300,8 @@ try:
             else:
                 username = "me"
 
-            # Save the resolved username to .env so the CLI can pick it up automatically
+        # Save the resolved username to .env so the CLI can pick it up automatically
+        if username:
             env_path = Path(__file__).parent / ".env"
             import re
             if env_path.exists():
@@ -315,7 +316,7 @@ try:
                 env_path.write_text(content, "utf-8")
             else:
                 env_path.write_text(f"GRAPHRAG_USERNAME={username}\n", "utf-8")
-
+            
             os.environ["GRAPHRAG_USERNAME"] = username
 
         return await ingest_activities(

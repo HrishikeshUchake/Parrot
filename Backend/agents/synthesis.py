@@ -210,8 +210,13 @@ async def _non_llm_synthesis_result(state: AgentState) -> dict | None:
         )
 
         prompt = SYNTHESIS_PROMPT.format(query=state["query"], context=context)
+        
+        # Select the correct client based on the llm configuration/mode
         try:
-            answer = await _client.generate(prompt)
+            if settings.llm_backend.strip().lower() == "openai":
+                answer = await _remote_client.generate(prompt)
+            else:
+                answer = await _local_client.generate(prompt)
         except Exception as exc:
             logger.error("Synthesis LLM call failed: %s", exc)
             answer = analytics_payload.get("summary", "Analytics computed from graph.")
@@ -248,6 +253,7 @@ async def synthesis_remote_node(state: AgentState) -> dict:
     results = state.get("search_results", [])
     context = _format_context(results)
 
+    anonymized_query = privatize_context(state["query"])
     anonymized_context = privatize_context(context)
     log_privacy_debug(context, anonymized_context)
     
@@ -257,7 +263,7 @@ async def synthesis_remote_node(state: AgentState) -> dict:
     )
 
     prompt = REMOTE_SYNTHESIS_PROMPT.format(
-        query=state["query"],
+        query=anonymized_query,
         context=anonymized_context,
     )
 

@@ -29,6 +29,10 @@ async def router_node(state: AgentState) -> dict:
     requires_graph = bool(state.get("requires_graph_traversal", False))
     analytics_kind = state.get("analytics_kind", "none")
 
+    # Hardcode 'identity' and 'meta' to always map to the 'simple' route
+    if intent in {"identity", "meta"}:
+        return {"route": "simple"}
+
     ADVANCED_INTENTS = {"trend_analysis",
                         "comparison", "open_ended", "summary"}
     llm_client = _resolve_llm_client(state)
