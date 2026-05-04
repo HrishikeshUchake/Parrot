@@ -3,11 +3,20 @@ from __future__ import annotations
 import logging
 
 from .state import AgentState
-from ..llm.llm_provider import get_node_llm_provider
+from ..llm.llm_provider import get_node_llm_provider, get_llm_provider_for_backend
 from ..llm.prompts import ROUTER_PROMPT
 
 logger = logging.getLogger(__name__)
 _client = get_node_llm_provider("router")
+
+
+def _resolve_llm_client(state: AgentState):
+    mode = str(state.get("llm_mode", "")).strip().lower()
+    if mode == "local":
+        return get_llm_provider_for_backend("ollama")
+    if mode == "remote":
+        return get_llm_provider_for_backend("openai")
+    return _client
 
 
 async def router_node(state: AgentState) -> dict:
@@ -20,8 +29,13 @@ async def router_node(state: AgentState) -> dict:
     requires_graph = bool(state.get("requires_graph_traversal", False))
     analytics_kind = state.get("analytics_kind", "none")
 
+    # Hardcode 'identity' and 'meta' to always map to the 'simple' route
+    if intent in {"identity", "meta"}:
+        return {"route": "simple"}
+
     ADVANCED_INTENTS = {"trend_analysis",
                         "comparison", "open_ended", "summary"}
+    llm_client = _resolve_llm_client(state)
 
     if requires_graph:
         route = "analytics"
@@ -76,7 +90,7 @@ async def router_node(state: AgentState) -> dict:
         )
         prompt = ROUTER_PROMPT.format(analysis=analysis_summary)
         try:
-            decision = await _client.generate(prompt)
+            decision = await llm_client.generate(prompt)
             route = "advanced" if "advanced" in decision.lower() else "simple"
         except Exception as exc:
             logger.warning(

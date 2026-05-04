@@ -6,7 +6,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from .state import AgentState
-from ..llm.llm_provider import get_node_llm_provider
+from ..llm.llm_provider import get_node_llm_provider, get_llm_provider_for_backend
 from ..llm.prompts import QUERY_ANALYSIS_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -18,8 +18,18 @@ def _truncate(text: str, n: int = 120) -> str:
 _client = get_node_llm_provider("query_analyzer")
 
 
+def _resolve_llm_client(state: AgentState):
+    mode = str(state.get("llm_mode", "")).strip().lower()
+    if mode == "local":
+        return get_llm_provider_for_backend("ollama")
+    if mode == "remote":
+        return get_llm_provider_for_backend("openai")
+    return _client
+
+
 def _requires_graph_traversal(intent: str, analytics_kind: str) -> bool:
-    return intent in {"analytics", "trend_analysis"} or analytics_kind in {"aggregate", "trend"}
+    return intent in {"analytics", "trend_analysis"} 
+# or analytics_kind in {"aggregate", "trend"}
 
 
 def _parse_date_range(date_str: str) -> tuple[str, str] | None:
@@ -70,9 +80,10 @@ async def query_analyzer_node(state: AgentState) -> dict:
     """Classify the user query and extract structured metadata."""
     query = state["query"]
     prompt = QUERY_ANALYSIS_PROMPT.format(query=query)
+    llm_client = _resolve_llm_client(state)
 
     try:
-        raw = await _client.generate(prompt)
+        raw = await llm_client.generate(prompt)
         # Strip markdown fences if present
         raw = raw.strip()
         if raw.startswith("```"):
@@ -101,7 +112,7 @@ async def query_analyzer_node(state: AgentState) -> dict:
     analytics_kind = analysis.get("analytics_kind", "none")
     aggregate_query_type = analysis.get("aggregate_query_type", "none")
 
-    is_analytics = intent == "analytics" or analytics_kind in {"aggregate", "trend"}
+    is_analytics = intent == "analytics" and analytics_kind in {"aggregate", "trend"}
     is_trend = intent == "trend_analysis" or analytics_kind == "trend"
     requires_graph_traversal = _requires_graph_traversal(intent, analytics_kind)
 

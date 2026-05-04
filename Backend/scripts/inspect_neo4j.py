@@ -59,16 +59,19 @@ def main() -> None:
                    p.reblogs_count    AS reblogs_count,
                    p.favourites_count AS favourites_count,
                    p.language         AS language,
-                   size(p.embedding)  AS emb_dim
+                   size(p.embedding)  AS emb_dim,
+                   p.content          AS content
             LIMIT 3
         """).data()
         for row in sample:
             tags = json.loads(row["tags_json"]) if row["tags_json"] else []
+            content_snippet = (row.get("content") or "").replace("\n", " ")[:150]
             print(
                 f"  Status {row['id']}  @{row['account_acct']}  "
                 f"reblogs={row['reblogs_count']}  favs={row['favourites_count']}  "
                 f"lang={row['language']}  embedding_dim={row['emb_dim']}\n"
-                f"    tags={tags}"
+                f"    tags={tags}\n"
+                f"    content={content_snippet}..."
             )
 
         # Tag frequency
