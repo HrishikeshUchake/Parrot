@@ -29,6 +29,7 @@ class CacheEntry:
     user_context_username: str
     route: str
     intent: str
+    entities: list[str] = field(default_factory=list)
     search_results: list[SearchResult] = field(default_factory=list)
     analytics_payload: dict[str, Any] | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -53,6 +54,7 @@ class SessionRetrievalCache:
         session_id: str,
         query: str,
         structured_key: str,
+        entities: list[str],
         query_embedding: list[float] | None = None,
     ) -> CacheLookupResult | None:
         if not settings.session_cache_enabled:
@@ -111,9 +113,13 @@ class SessionRetrievalCache:
         if query_embedding is not None:
             best_entry: CacheEntry | None = None
             best_similarity = -1.0
+            current_entities = entities
 
             for entry in entries:
                 if entry.query_embedding is None:
+                    continue
+
+                if not entities_compatible(current_entities, entry.entities):
                     continue
 
                 similarity = cosine_similarity(query_embedding, entry.query_embedding)
@@ -152,6 +158,75 @@ class SessionRetrievalCache:
             query,
         )
         return None
+    
+    def get_multi_entity(
+        self,
+        *,
+        session_id: str,
+        query: str,
+        entities: list[str],
+    ) -> CacheLookupResult | None:
+        if not settings.session_cache_enabled:
+            return None
+
+        # Only trigger if multiple entities
+        if len(entities) < 2:
+            return None
+
+        entries = self._sessions.get(session_id, [])
+        if not entries:
+            return None
+
+        matched_entries: list[CacheEntry] = []
+
+        for entity in entities:
+            best_match: CacheEntry | None = None
+
+            # find most recent matching entry for each entity
+            for entry in reversed(entries):
+                if entity in entry.entities:
+                    if entry.search_results:
+                        best_match = entry
+                        break
+
+            if best_match is None:
+                return None  # require all entities
+
+            matched_entries.append(best_match)
+
+        # merge results
+        merged_results: list[SearchResult] = []
+        seen: set[tuple[str, str]] = set()
+
+        for entry in matched_entries:
+            for result in entry.search_results:
+                key = (result.result_type, result.item_id)
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged_results.append(result)
+
+        logger.info(
+            "\n\n[CACHE]\n"
+            "  Status: HIT\n"
+            "  Type: multi_entity\n"
+            "  Session: %s\n"
+            "  Query: %s\n"
+            "  Entities: %s\n"
+            "  Combined Entries: %d\n"
+            "  Combined Results: %d\n",
+            session_id,
+            query,
+            entities,
+            len(matched_entries),
+            len(merged_results),
+        )
+
+        return CacheLookupResult(
+            search_results=merged_results,
+            analytics_payload=None,
+            hit_type="multi_entity",
+        )
 
     def set(
         self,
@@ -163,6 +238,7 @@ class SessionRetrievalCache:
         user_context_username: str,
         route: str,
         intent: str,
+        entities: list[str],
         search_results: list[SearchResult],
         analytics_payload: dict[str, Any] | None = None,
     ) -> None:
@@ -177,6 +253,7 @@ class SessionRetrievalCache:
             user_context_username=user_context_username,
             route=route,
             intent=intent,
+            entities=entities,
             search_results=search_results,
             analytics_payload=analytics_payload,
         )
@@ -194,14 +271,52 @@ class SessionRetrievalCache:
             "  Session: %s\n"
             "  Route: %s\n"
             "  Intent: %s\n"
+            "  Entities: %s\n"
             "  Results Count: %d\n"
             "  Analytics Payload: %s\n",
             session_id,
             route,
             intent,
+            entities,
             len(search_results),
             analytics_payload is not None,
         )
+
+_ENTITY_STOP_WORDS = {
+    "i", "me", "my", "mine", "self", "you", "your",
+    "messages", "message", "posts", "post", "stories", "story",
+    "conversation", "conversations", "chat", "chats", "convo", "convos",
+    "people", "contacts", "top contacts", "anything",
+}
+
+
+def normalize_entities(raw_entities: list[Any]) -> list[str]:
+    cleaned: list[str] = []
+
+    for raw in raw_entities or []:
+        entity = str(raw).lower().strip()
+        entity = entity.replace("*", "")
+        entity = entity.lstrip("@").strip()
+
+        if not entity:
+            continue
+
+        if entity in _ENTITY_STOP_WORDS:
+            continue
+
+        cleaned.append(entity)
+
+    return sorted(set(cleaned))
+
+
+def entities_compatible(current_entities: list[str], cached_entities: list[str]) -> bool:
+    current = set(current_entities)
+    cached = set(cached_entities)
+
+    if current:
+        return current.issubset(cached) or current == cached
+
+    return not cached
 
 
 def normalize_query(query: str) -> str:

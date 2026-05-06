@@ -15,6 +15,7 @@ from ..services.vector_store import VectorStore
 
 from ..services.session_cache import (
     build_structured_cache_key,
+    normalize_entities,
     session_retrieval_cache,
 )
 
@@ -84,11 +85,41 @@ def _try_retrieval_cache(
 ):
     session_id = _get_session_id(state)
     structured_key = build_structured_cache_key(state, user_context)
+    entities = normalize_entities(state.get("entities", []))
+
+    multi_cached = session_retrieval_cache.get_multi_entity(
+        session_id=session_id,
+        query=state["query"],
+        entities=entities,
+    )
+
+    if multi_cached is not None:
+        logger.info(
+            "\n\n[RETRIEVAL_CACHE]\n"
+            "  Status: HIT\n"
+            "  Hit Type: %s\n"
+            "  Similarity: n/a\n"
+            "  Session: %s\n"
+            "  Query: %s\n"
+            "  Action: combined multiple cached entries and skipped Neo4j/database retrieval\n",
+            multi_cached.hit_type,
+            session_id,
+            _short(state["query"]),
+        )
+
+        return {
+            "search_results": multi_cached.search_results,
+            "analytics_payload": multi_cached.analytics_payload,
+            "cache_hit": True,
+            "cache_hit_type": multi_cached.hit_type,
+            "cache_similarity": 0.0,
+        }
 
     cached = session_retrieval_cache.get(
         session_id=session_id,
         query=state["query"],
         structured_key=structured_key,
+        entities=entities,
         query_embedding=query_embedding,
     )
 
@@ -136,6 +167,7 @@ def _save_retrieval_cache(
         user_context_username=user_context,
         route=state.get("route", ""),
         intent=state.get("intent", ""),
+        entities=normalize_entities(state.get("entities", [])),
         search_results=search_results,
         analytics_payload=analytics_payload,
     )
