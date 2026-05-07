@@ -1005,11 +1005,11 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
         "\n\n[ADVANCED_RETRIEVAL_STEP1]\n"
         "  User Context: %s\n"
         "  Queries: %s\n"
-        "  Conversation Partner: %s\n"
+        "  Conversation Partners: %s\n"
         "  Deduped Results: %d\n",
         user_context,
         queries,
-        conversation_partner,
+        conversation_partners,
         len(results),
     )
     for line in _result_debug_summary(results):
