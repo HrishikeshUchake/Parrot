@@ -13,6 +13,7 @@ from .synthesis_privacy import (
     restore_text,
     log_privacy_debug,
     build_privacy_debug_payload,
+    add_known_entities,
 )
 
 logger = logging.getLogger(__name__)
@@ -209,11 +210,15 @@ async def _non_llm_synthesis_result(state: AgentState) -> dict | None:
             analytics_payload.get("query_type"),
         )
 
-        prompt = SYNTHESIS_PROMPT.format(query=state["query"], context=context)
+        chat_history = state.get("chat_history", [])
+        chat_text = "\n".join([f"{msg['role'].capitalize()}: {msg['content']}" for msg in chat_history]) if chat_history else "None"
         
-        # Select the correct client based on the llm configuration/mode
+        prompt = SYNTHESIS_PROMPT.format(query=state["query"], context=context, chat_history=chat_text)
+        
+        # Select the correct client based on the resolved llm mode
+        mode = synthesis_mode_decision(state)
         try:
-            if settings.llm_backend.strip().lower() == "openai":
+            if mode == "remote":
                 answer = await _remote_client.generate(prompt)
             else:
                 answer = await _local_client.generate(prompt)
@@ -253,6 +258,11 @@ async def synthesis_remote_node(state: AgentState) -> dict:
     results = state.get("search_results", [])
     context = _format_context(results)
 
+    # Register known entities (from query analyzer) so the privatizer catches them even without @
+    add_known_entities(state.get("entities", []))
+    if state.get("user_context_username"):
+        add_known_entities([state.get("user_context_username")])
+
     anonymized_query = privatize_context(state["query"])
     anonymized_context = privatize_context(context)
     log_privacy_debug(context, anonymized_context)
@@ -262,9 +272,15 @@ async def synthesis_remote_node(state: AgentState) -> dict:
         state.get("user_context_username"),
     )
 
+    chat_history = state.get("chat_history", [])
+    chat_text = "\n".join([f"{msg['role'].capitalize()}: {msg['content']}" for msg in chat_history]) if chat_history else "None"
+    # Anonymize history too in case it leaks PII
+    anonymized_chat_text = privatize_context(chat_text) if chat_history else "None"
+
     prompt = REMOTE_SYNTHESIS_PROMPT.format(
         query=anonymized_query,
         context=anonymized_context,
+        chat_history=anonymized_chat_text,
     )
 
     try:
@@ -295,6 +311,7 @@ async def synthesis_remote_node(state: AgentState) -> dict:
             "privatizer_class": privacy_meta["privatizer_class"],
             "pii_detected": privacy_meta["pii_detected"],
             "mappings": privacy_meta["mappings"],
+            "anonymized_query": anonymized_query,
             "anonymized_context": anonymized_context,
             "remote_prompt": prompt,
             "anonymized_answer": answer,
@@ -327,9 +344,13 @@ async def synthesis_local_node(state: AgentState) -> dict:
     for r in results:
         logger.info("  %s", _result_brief(r))
 
+    chat_history = state.get("chat_history", [])
+    chat_text = "\n".join([f"{msg['role'].capitalize()}: {msg['content']}" for msg in chat_history]) if chat_history else "None"
+
     prompt = SYNTHESIS_PROMPT.format(
         query=state["query"],
         context=context,
+        chat_history=chat_text,
     )
     try:
         answer = await _local_client.generate(prompt)

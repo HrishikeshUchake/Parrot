@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from .state import AgentState
 from ..llm.llm_provider import get_node_llm_provider, get_llm_provider_for_backend
-from ..llm.prompts import QUERY_ANALYSIS_PROMPT
+from ..llm.prompts import QUERY_ANALYSIS_PROMPT, REWRITE_QUERY_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +79,25 @@ def _parse_date_range(date_str: str) -> tuple[str, str] | None:
 async def query_analyzer_node(state: AgentState) -> dict:
     """Classify the user query and extract structured metadata."""
     query = state["query"]
-    prompt = QUERY_ANALYSIS_PROMPT.format(query=query)
+    chat_history = state.get("chat_history", [])
     llm_client = _resolve_llm_client(state)
+
+    # Rewrite the query if there is conversation history
+    if chat_history:
+        history_text = "\n".join([f"{msg['role'].capitalize()}: {msg['content']}" for msg in chat_history])
+        rewrite_prompt = REWRITE_QUERY_PROMPT.format(chat_history=history_text, query=query)
+        try:
+            rewritten_query = await llm_client.generate(rewrite_prompt)
+            rewritten_query = rewritten_query.strip()
+            if rewritten_query:
+                # Use the rewritten query for analysis and the rest of the pipeline
+                logger.info(f"Rewrote query based on history:\n  Original: {query}\n  Rewritten: {rewritten_query}")
+                query = rewritten_query
+                state["query"] = query  # Important so subsequent nodes use the standalone query
+        except Exception as exc:
+            logger.warning("Query rewrite failed: %s", exc)
+
+    prompt = QUERY_ANALYSIS_PROMPT.format(query=query)
 
     try:
         raw = await llm_client.generate(prompt)
@@ -155,6 +172,7 @@ async def query_analyzer_node(state: AgentState) -> dict:
     )
 
     return {
+        "query": query,  # in case it was rewritten
         "intent": intent,
         "entities": analysis.get("entities", []),
         "filters": filters,

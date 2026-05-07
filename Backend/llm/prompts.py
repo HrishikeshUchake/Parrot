@@ -1,5 +1,16 @@
 """Prompt templates for each agent node."""
 
+REWRITE_QUERY_PROMPT = """You are an AI assistant helping to rewrite user queries based on a conversation history.
+Given the following conversation history and a new user query, rewrite the user query to be a standalone, fully self-contained question that can be understood without any prior context.
+If the new query is already standalone and does not refer back to previous conversation, just return it exactly as is.
+
+Conversation History:
+{chat_history}
+
+User Query: {query}
+
+Standalone Query (return ONLY the rewritten query text, nothing else):"""
+
 QUERY_ANALYSIS_PROMPT = """You are a query analysis assistant for a social media analytics platform.
 
 Analyze the following user query and extract:
@@ -86,6 +97,9 @@ When summarizing a conversation with a specific person:
 - Keep it to 2-3 sentences. Do not list every message individually.
 
 User question: {query}
+
+Recent Conversation History:
+{chat_history}
 
 Retrieved context:
 {context}

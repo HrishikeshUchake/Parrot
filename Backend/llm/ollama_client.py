@@ -21,7 +21,7 @@ class OllamaClient:
         self._temperature = temperature
         self._max_tokens = max_tokens
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8))
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8), reraise=True)
     async def generate(self, prompt: str, system: str = "") -> str:
         """Non-streaming generation. Returns the model response text."""
         if system:
@@ -47,7 +47,7 @@ class OllamaClient:
             resp.raise_for_status()
             return resp.json()["response"].strip()
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8))
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8), reraise=True)
     async def chat(self, messages: list[dict]) -> str:
         """Chat endpoint (system + user messages)."""
         async with httpx.AsyncClient(timeout=120.0) as client:

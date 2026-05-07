@@ -102,6 +102,7 @@ try:
         user_context_username: str | None = None
         llm_mode: str | None = None
         session_id: str | None = None
+        chat_history: list[dict] | None = None
     class QueryResponse(BaseModel):
         answer: str
         route: str
@@ -330,9 +331,10 @@ try:
         state = {
             "query": req.query,
             "search_results": [],
-            "search_results": [],
             "session_id": req.session_id or "default",
         }
+        if req.chat_history:
+            state["chat_history"] = req.chat_history
         if user:
             state["user_context_username"] = user
         if req.llm_mode:
@@ -385,6 +387,13 @@ def _print_pipeline_debug(result: dict) -> None:
     if result.get("llm_mode"):
         print(f"LLM mode: {result.get('llm_mode')}")
 
+    chat_history = result.get("chat_history") or []
+    if chat_history:
+        print(f"Chat History ({len(chat_history)} messages):")
+        for i, msg in enumerate(chat_history[-4:]): # Show last 4 for brevity
+            content = msg.get("content", "").replace("\n", " ")[:60]
+            print(f"  [{msg.get('role')}] {content}...")
+
     analytics_payload = result.get("analytics_payload")
     if analytics_payload:
         print(
@@ -430,8 +439,7 @@ def _print_pipeline_debug(result: dict) -> None:
     anonymized_context = privacy_debug.get("anonymized_context")
     remote_prompt = privacy_debug.get("remote_prompt")
     anonymized_answer = privacy_debug.get("anonymized_answer")
-    restored_answer = result.get("answer")
-
+    
     if anonymized_context is not None:
         print("\nAnonymized context sent to remote LLM:")
         print("=" * 70)
@@ -447,7 +455,10 @@ def _print_pipeline_debug(result: dict) -> None:
         print("=" * 70)
         print(anonymized_answer)
         print("=" * 70)
-    if restored_answer is not None:
+
+    # Only print the "Deanonymized retrieved answer" if we actually have an anonymized one (which only happens in remote mode)
+    if anonymized_answer is not None and result.get("answer"):
+        restored_answer = result.get("answer")
         print("\nDeanonymized retrieved answer:")
         print("=" * 70)
         print(restored_answer)
@@ -492,6 +503,7 @@ async def interactive_loop(
     print("\nWelcome to Parrot Agentic RAG. Type your query (Ctrl-C to exit)\n")
 
     pending_correction: tuple[str, str] | None = None  # (original_query, corrected_query)
+    chat_history: list[dict] = []  # Stores conversation context
 
     while True:
         try:
@@ -513,6 +525,7 @@ async def interactive_loop(
             "query": query,
             "search_results": [],
             "session_id": "cli",
+            "chat_history": list(chat_history),
         }
         if user_context_username:
             state["user_context_username"] = user_context_username
@@ -522,6 +535,9 @@ async def interactive_loop(
             state["debug_pipeline"] = True
         result = await rag_graph.ainvoke(state)
         answer = result.get("answer", "<no answer>")
+        
+        chat_history.append({"role": "user", "content": query})
+        chat_history.append({"role": "assistant", "content": answer})
 
         if debug_pipeline:
             _print_pipeline_debug(result)

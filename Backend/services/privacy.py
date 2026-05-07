@@ -112,6 +112,9 @@ class ContentPrivatizer:
         # TODO: Implement context-level sanitization
         raise NotImplementedError("Subclass must implement privatize_context()")
 
+    def add_known_entities(self, entities: list[str]) -> None:
+        """Dynamically add specific known entities (like un-@'d usernames) to ensure they are caught."""
+        pass
 
 class NoOpPrivatizer(ContentPrivatizer):
     """Pass-through privatizer that returns content unchanged.
@@ -190,6 +193,29 @@ class PresidioPrivatizer(ContentPrivatizer):
         self.mappings = {}  # token -> original value
         self.reverse_mappings = {}  # original value -> token (for consistency)
         self.counters = {}  # entity_type -> count
+
+    def add_known_entities(self, entities: list[str]) -> None:
+        """Dynamically add specific known entities (like un-@'d usernames) to ensure they are caught."""
+        from presidio_analyzer import Pattern, PatternRecognizer
+        import re
+        
+        for e in entities:
+            e = e.strip().lstrip("@")
+            if not e or len(e) < 3:
+                continue
+                
+            # Create an exact word boundary regex for this entity
+            pattern = Pattern(
+                name=f"known_entity_{e}",
+                regex=rf"(?i)\b{re.escape(e)}\b",
+                score=1.0
+            )
+            # Add it to the analyzer registry as a USERNAME
+            recognizer = PatternRecognizer(
+                supported_entity="USERNAME",
+                patterns=[pattern]
+            )
+            self.analyzer.registry.add_recognizer(recognizer)
 
     def anonymize(self, text: str) -> dict:
         """Detect and anonymize PII in text with consistent tokens.
