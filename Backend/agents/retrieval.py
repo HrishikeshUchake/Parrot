@@ -13,6 +13,15 @@ from ..services.embedding_service import EmbeddingService
 from ..services.search_engine import HybridSearchEngine
 from ..services.vector_store import VectorStore
 
+<<<<<<< HEAD
+=======
+from ..services.session_cache import (
+    build_structured_cache_key,
+    normalize_entities,
+    session_retrieval_cache,
+)
+
+>>>>>>> 2c96fdf2fac0aa61fa5cf106a887b755cf18514b
 logger = logging.getLogger(__name__)
 _engine = HybridSearchEngine()
 _store = VectorStore()
@@ -68,6 +77,107 @@ def _result_debug_summary(results: list[SearchResult]) -> list[str]:
             )
     return lines
 
+<<<<<<< HEAD
+=======
+def _get_session_id(state: AgentState) -> str:
+    return state.get("session_id") or "default"
+
+
+def _try_retrieval_cache(
+    state: AgentState,
+    user_context: str,
+    query_embedding: list[float] | None = None,
+):
+    session_id = _get_session_id(state)
+    structured_key = build_structured_cache_key(state, user_context)
+    entities = normalize_entities(state.get("entities", []))
+
+    multi_cached = session_retrieval_cache.get_multi_entity(
+        session_id=session_id,
+        query=state["query"],
+        entities=entities,
+    )
+
+    if multi_cached is not None:
+        logger.info(
+            "\n\n[RETRIEVAL_CACHE]\n"
+            "  Status: HIT\n"
+            "  Hit Type: %s\n"
+            "  Similarity: n/a\n"
+            "  Session: %s\n"
+            "  Query: %s\n"
+            "  Action: combined multiple cached entries and skipped Neo4j/database retrieval\n",
+            multi_cached.hit_type,
+            session_id,
+            _short(state["query"]),
+        )
+
+        return {
+            "search_results": multi_cached.search_results,
+            "analytics_payload": multi_cached.analytics_payload,
+            "cache_hit": True,
+            "cache_hit_type": multi_cached.hit_type,
+            "cache_similarity": 0.0,
+        }
+
+    cached = session_retrieval_cache.get(
+        session_id=session_id,
+        query=state["query"],
+        structured_key=structured_key,
+        entities=entities,
+        query_embedding=query_embedding,
+    )
+
+    if cached is None:
+        return None
+
+    logger.info(
+        "\n\n[RETRIEVAL_CACHE]\n"
+        "  Status: HIT\n"
+        "  Hit Type: %s\n"
+        "  Similarity: %s\n"
+        "  Session: %s\n"
+        "  Query: %s\n"
+        "  Action: skipped Neo4j/database retrieval\n",
+        cached.hit_type,
+        f"{cached.similarity:.3f}" if cached.similarity is not None else "n/a",
+        session_id,
+        _short(state["query"]),
+    )
+
+    return {
+        "search_results": cached.search_results,
+        "analytics_payload": cached.analytics_payload,
+        "cache_hit": True,
+        "cache_hit_type": cached.hit_type,
+        "cache_similarity": cached.similarity or 0.0,
+    }
+
+
+def _save_retrieval_cache(
+    state: AgentState,
+    user_context: str,
+    search_results: list[SearchResult],
+    analytics_payload: dict | None = None,
+    query_embedding: list[float] | None = None,
+) -> None:
+    session_id = _get_session_id(state)
+    structured_key = build_structured_cache_key(state, user_context)
+
+    session_retrieval_cache.set(
+        session_id=session_id,
+        query=state["query"],
+        structured_key=structured_key,
+        query_embedding=query_embedding,
+        user_context_username=user_context,
+        route=state.get("route", ""),
+        intent=state.get("intent", ""),
+        entities=normalize_entities(state.get("entities", [])),
+        search_results=search_results,
+        analytics_payload=analytics_payload,
+    )
+
+>>>>>>> 2c96fdf2fac0aa61fa5cf106a887b755cf18514b
 
 def _extract_user_context(state: AgentState) -> str:
     """Get username from explicit state/filter first, then fallback to query hints."""
@@ -837,11 +947,11 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
         "\n\n[ADVANCED_RETRIEVAL_STEP1]\n"
         "  User Context: %s\n"
         "  Queries: %s\n"
-        "  Conversation Partner: %s\n"
+        "  Conversation Partners: %s\n"
         "  Deduped Results: %d\n",
         user_context,
         queries,
-        conversation_partner,
+        conversation_partners,
         len(results),
     )
     for line in _result_debug_summary(results):

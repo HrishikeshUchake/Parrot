@@ -15,11 +15,27 @@ from typing import Any
 
 load_dotenv(Path(__file__).parent / ".env")
 
-# logging.basicConfig(
-#     level=logging.INFO,
-#     format="%(levelname)s | %(name)s | %(message)s",
-# )
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s | %(name)s | %(message)s",
+)
 logger = logging.getLogger(__name__)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # Suppress Neo4j driver schema warnings for missing nodes/properties
 logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
@@ -55,24 +71,31 @@ try:
                                     continue
                                 if str(act.get("source", "")) == "individual_chat":
                                     for key in ("sender_name", "receiver_name"):
-                                        val = str(act.get(key, "") or "").strip()
+                                        val = str(act.get(key, "")
+                                                  or "").strip()
                                         if val:
                                             candidate_names.append(val)
                                 else:
-                                    val = str(act.get("author_name") or act.get("account_username") or "").strip()
+                                    val = str(act.get("author_name") or act.get(
+                                        "account_username") or "").strip()
                                     if val:
                                         candidate_names.append(val)
                             if candidate_names:
-                                username = Counter(candidate_names).most_common(1)[0][0]
+                                username = Counter(
+                                    candidate_names).most_common(1)[0][0]
                                 os.environ["GRAPHRAG_USERNAME"] = username
-                                logger.info("Startup sync: inferred username '%s'.", username)
+                                logger.info(
+                                    "Startup sync: inferred username '%s'.", username)
 
-                        logger.info("Startup sync: %d activities from personal_assistant.", len(activities))
+                        logger.info(
+                            "Startup sync: %d activities from personal_assistant.", len(activities))
                         await ingest_activities(
-                            IngestRequest(username=username, activities=activities)
+                            IngestRequest(username=username,
+                                          activities=activities)
                         )
         except Exception as exc:
-            logger.warning("Startup sync failed (personal_assistant not ready?): %s", exc)
+            logger.warning(
+                "Startup sync failed (personal_assistant not ready?): %s", exc)
 
         # Fallback: if username still unknown, infer from Neo4j (data already imported)
         if not os.environ.get("GRAPHRAG_USERNAME"):
@@ -89,9 +112,11 @@ try:
                 if rows:
                     inferred = rows[0]["username"]
                     os.environ["GRAPHRAG_USERNAME"] = inferred
-                    logger.info("Startup: inferred username '%s' from Neo4j.", inferred)
+                    logger.info(
+                        "Startup: inferred username '%s' from Neo4j.", inferred)
             except Exception as exc:
-                logger.warning("Startup: Neo4j username inference failed: %s", exc)
+                logger.warning(
+                    "Startup: Neo4j username inference failed: %s", exc)
         yield
 
     import os
@@ -317,7 +342,7 @@ try:
                 env_path.write_text(content, "utf-8")
             else:
                 env_path.write_text(f"GRAPHRAG_USERNAME={username}\n", "utf-8")
-            
+
             os.environ["GRAPHRAG_USERNAME"] = username
 
         return await ingest_activities(
@@ -327,7 +352,8 @@ try:
     @app.post("/query", response_model=QueryResponse)
     async def query_endpoint(req: QueryRequest) -> QueryResponse:
         from .config import settings
-        user = req.user_context_username or settings.graphrag_username or os.environ.get("GRAPHRAG_USERNAME") or None
+        user = req.user_context_username or settings.graphrag_username or os.environ.get(
+            "GRAPHRAG_USERNAME") or None
         state = {
             "query": req.query,
             "search_results": [],
@@ -414,7 +440,8 @@ def _print_pipeline_debug(result: dict) -> None:
             preview = (post.content or "").replace("\n", " ")[:300]
             print(f"  {i}. post | score={score:.3f} | @{author} | {preview}")
         else:
-            content = (getattr(item, "content", "") or "").replace("\n", " ")[:300]
+            content = (getattr(item, "content", "")
+                       or "").replace("\n", " ")[:300]
             print(f"  {i}. {kind} | score={score:.3f} | {content}")
 
     reasoning = result.get("reasoning")
@@ -463,8 +490,10 @@ def _print_pipeline_debug(result: dict) -> None:
         print("=" * 70)
         print(restored_answer)
         print("=" * 70)
-        
+
+
 _CONFIRMATIONS = {"yes", "yeah", "yep", "yup", "sure", "ok", "okay", "y"}
+
 
 def _cli_source_preview(results: list[Any]) -> list[str]:
     lines = []
@@ -491,6 +520,7 @@ def _cli_source_preview(results: list[Any]) -> list[str]:
             f"  {i}. {result_type} | id={item_id} | score={score:.3f} | {label}"
         )
     return lines
+
 
 async def interactive_loop(
     user_context_username: str | None = None,
@@ -546,7 +576,8 @@ async def interactive_loop(
         m = _re.search(r"Did you mean one of these: \*\*(\w+)\*\*", answer)
         if m:
             suggestion = m.group(1)
-            original_partner = _re.search(r"\bwith\s+@?(\w+)\b", query, _re.IGNORECASE)
+            original_partner = _re.search(
+                r"\bwith\s+@?(\w+)\b", query, _re.IGNORECASE)
             if original_partner:
                 corrected = _re.sub(
                     r"@?" + _re.escape(original_partner.group(1)),
@@ -559,7 +590,8 @@ async def interactive_loop(
         print(f"\n--- Answer ---")
         print(answer)
         sources = result.get("search_results", [])
-        print(f"\n[Route: {result.get('route', '?')} | Sources: {len(sources)}]")
+        print(
+            f"\n[Route: {result.get('route', '?')} | Sources: {len(sources)}]")
         for line in _cli_source_preview(sources):
             print(line)
         print()
@@ -646,16 +678,19 @@ def _run_import_if_requested(args: argparse.Namespace) -> bool:
 if __name__ == "__main__":
     cli_args = _build_cli_parser().parse_args()
     if not _run_import_if_requested(cli_args):
-        context_user = cli_args.username or os.environ.get("GRAPHRAG_USERNAME") or None
+        context_user = cli_args.username or os.environ.get(
+            "GRAPHRAG_USERNAME") or None
         if not context_user:
             try:
                 import httpx as _httpx
                 from .config import settings as _settings
-                resp = _httpx.get(f"{_settings.personal_assistant_url}/me", timeout=5)
+                resp = _httpx.get(
+                    f"{_settings.personal_assistant_url}/me", timeout=5)
                 if resp.status_code == 200:
                     context_user = resp.json().get("username") or None
                     if context_user:
-                        logger.info("CLI: got username '%s' from personal_assistant.", context_user)
+                        logger.info(
+                            "CLI: got username '%s' from personal_assistant.", context_user)
             except Exception as exc:
                 logger.warning("CLI: personal_assistant /me failed: %s", exc)
 
