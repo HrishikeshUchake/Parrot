@@ -114,6 +114,7 @@ try:
 
     class QueryResponse(BaseModel):
         answer: str
+        response: str
         route: str
         num_sources: int
         reasoning: str
@@ -341,7 +342,6 @@ try:
         state = {
             "query": req.query,
             "search_results": [],
-            "search_results": [],
             "session_id": req.session_id or "default",
         }
         if user:
@@ -350,8 +350,12 @@ try:
             state["llm_mode"] = req.llm_mode.strip().lower()
 
         result = await rag_graph.ainvoke(state)
+
+        answer = result.get("answer", "")
+
         return QueryResponse(
-            answer=result.get("answer", ""),
+            answer=answer,
+            response=answer,
             route=result.get("route", ""),
             num_sources=len(result.get("search_results", [])),
             reasoning=result.get("reasoning", ""),
