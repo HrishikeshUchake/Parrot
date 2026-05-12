@@ -246,7 +246,8 @@ class PresidioPrivatizer(ContentPrivatizer):
             "US_SSN",
             "US_PASSPORT",
             "USERNAME",
-            "DATE_TIME"
+            "DATE_TIME",
+            "LOCATION"
         ]
         results = self.analyzer.analyze(text=text, language="en", entities=target_entities)
 
