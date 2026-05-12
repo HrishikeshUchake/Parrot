@@ -15,26 +15,11 @@ from typing import Any
 
 load_dotenv(Path(__file__).parent / ".env")
 
-# logging.basicConfig(
-#     level=logging.INFO,
-#     format="%(levelname)s | %(name)s | %(message)s",
-# )
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s | %(name)s | %(message)s",
+)
 logger = logging.getLogger(__name__)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 # Suppress Neo4j driver schema warnings for missing nodes/properties
@@ -128,6 +113,7 @@ try:
         llm_mode: str | None = None
         session_id: str | None = None
         chat_history: list[dict] | None = None
+
     class QueryResponse(BaseModel):
         answer: str
         response: str
@@ -471,7 +457,7 @@ def _print_pipeline_debug(result: dict) -> None:
     anonymized_context = privacy_debug.get("anonymized_context")
     remote_prompt = privacy_debug.get("remote_prompt")
     anonymized_answer = privacy_debug.get("anonymized_answer")
-    
+
     if anonymized_context is not None:
         print("\nAnonymized context sent to remote LLM:")
         print("=" * 70)
@@ -537,7 +523,8 @@ async def interactive_loop(
 
     print("\nWelcome to Parrot Agentic RAG. Type your query (Ctrl-C to exit)\n")
 
-    pending_correction: tuple[str, str] | None = None  # (original_query, corrected_query)
+    # (original_query, corrected_query)
+    pending_correction: tuple[str, str] | None = None
     chat_history: list[dict] = []  # Stores conversation context
 
     while True:
@@ -570,7 +557,7 @@ async def interactive_loop(
             state["debug_pipeline"] = True
         result = await rag_graph.ainvoke(state)
         answer = result.get("answer", "<no answer>")
-        
+
         chat_history.append({"role": "user", "content": query})
         chat_history.append({"role": "assistant", "content": answer})
 
