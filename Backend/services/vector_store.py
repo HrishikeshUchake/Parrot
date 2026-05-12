@@ -263,7 +263,7 @@ _COUNT_POSTS_BY_USER = """
 """
 
 _MESSAGE_VECTOR_SEARCH = """
-    CALL db.index.vector.queryNodes($index, $top_k, $embedding)
+    CALL db.index.vector.queryNodes($index, 50, $embedding)
     YIELD node AS m, score
     WHERE m.user_context_username = $username
       AND ($partner IS NULL OR m.sender_name = $partner OR m.receiver_name = $partner)
@@ -275,6 +275,7 @@ _MESSAGE_VECTOR_SEARCH = """
            m.time_ms             AS time_ms,
            m.source              AS source,
            score
+    ORDER BY score DESC LIMIT $top_k
 """
 
 _COMMENT_VECTOR_SEARCH = """

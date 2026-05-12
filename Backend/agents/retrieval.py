@@ -13,15 +13,12 @@ from ..services.embedding_service import EmbeddingService
 from ..services.search_engine import HybridSearchEngine
 from ..services.vector_store import VectorStore
 
-<<<<<<< HEAD
-=======
 from ..services.session_cache import (
     build_structured_cache_key,
     normalize_entities,
     session_retrieval_cache,
 )
 
->>>>>>> 2c96fdf2fac0aa61fa5cf106a887b755cf18514b
 logger = logging.getLogger(__name__)
 _engine = HybridSearchEngine()
 _store = VectorStore()
@@ -77,8 +74,6 @@ def _result_debug_summary(results: list[SearchResult]) -> list[str]:
             )
     return lines
 
-<<<<<<< HEAD
-=======
 def _get_session_id(state: AgentState) -> str:
     return state.get("session_id") or "default"
 
@@ -177,7 +172,6 @@ def _save_retrieval_cache(
         analytics_payload=analytics_payload,
     )
 
->>>>>>> 2c96fdf2fac0aa61fa5cf106a887b755cf18514b
 
 def _extract_user_context(state: AgentState) -> str:
     """Get username from explicit state/filter first, then fallback to query hints."""
@@ -773,7 +767,7 @@ async def simple_retrieval_node(state: AgentState) -> dict:
                         conversation_partner = candidate
                         break
                         
-        if not conversation_partner and candidates:
+        if not conversation_partner and candidates and state.get("intent") == "summary":
             # Fallback if no exact or fuzzy matched partner had messages
             conversation_partner = candidates[0]
 
@@ -951,7 +945,7 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
         "  Deduped Results: %d\n",
         user_context,
         queries,
-        conversation_partners,
+        conversation_partner,
         len(results),
     )
     for line in _result_debug_summary(results):

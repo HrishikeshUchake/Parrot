@@ -15,10 +15,10 @@ from typing import Any
 
 load_dotenv(Path(__file__).parent / ".env")
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(levelname)s | %(name)s | %(message)s",
-)
+# logging.basicConfig(
+#     level=logging.INFO,
+#     format="%(levelname)s | %(name)s | %(message)s",
+# )
 logger = logging.getLogger(__name__)
 
 
@@ -418,12 +418,12 @@ def _print_pipeline_debug(result: dict) -> None:
     if result.get("llm_mode"):
         print(f"LLM mode: {result.get('llm_mode')}")
 
-    chat_history = result.get("chat_history") or []
-    if chat_history:
-        print(f"Chat History ({len(chat_history)} messages):")
-        for i, msg in enumerate(chat_history[-4:]): # Show last 4 for brevity
-            content = msg.get("content", "").replace("\n", " ")[:60]
-            print(f"  [{msg.get('role')}] {content}...")
+    # chat_history = result.get("chat_history") or []
+    # if chat_history:
+    #     print(f"Chat History ({len(chat_history)} messages):")
+    #     for i, msg in enumerate(chat_history[-4:]): # Show last 4 for brevity
+    #         content = msg.get("content", "").replace("\n", " ")[:60]
+    #         print(f"  [{msg.get('role')}] {content}...")
 
     analytics_payload = result.get("analytics_payload")
     if analytics_payload:

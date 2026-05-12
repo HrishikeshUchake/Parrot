@@ -129,7 +129,10 @@ async def query_analyzer_node(state: AgentState) -> dict:
     analytics_kind = analysis.get("analytics_kind", "none")
     aggregate_query_type = analysis.get("aggregate_query_type", "none")
 
-    is_analytics = intent == "analytics" and analytics_kind in {"aggregate", "trend"}
+    is_analytics = intent == "analytics" or analytics_kind in {"aggregate", "trend"}
+    if intent == "analytics" and analytics_kind not in {"aggregate", "trend"}:
+        analytics_kind = "aggregate"
+        
     is_trend = intent == "trend_analysis" or analytics_kind == "trend"
     requires_graph_traversal = _requires_graph_traversal(intent, analytics_kind)
 
@@ -172,7 +175,6 @@ async def query_analyzer_node(state: AgentState) -> dict:
     )
 
     return {
-        "query": query,  # in case it was rewritten
         "intent": intent,
         "entities": analysis.get("entities", []),
         "filters": filters,

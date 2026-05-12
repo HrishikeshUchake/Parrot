@@ -213,25 +213,70 @@ async def _non_llm_synthesis_result(state: AgentState) -> dict | None:
         chat_history = state.get("chat_history", [])
         chat_text = "\n".join([f"{msg['role'].capitalize()}: {msg['content']}" for msg in chat_history]) if chat_history else "None"
         
-        prompt = SYNTHESIS_PROMPT.format(query=state["query"], context=context, chat_history=chat_text)
-        
         # Select the correct client based on the resolved llm mode
         mode = synthesis_mode_decision(state)
         try:
             if mode == "remote":
-                answer = await _remote_client.generate(prompt)
+                real_usernames = set()
+                if state.get("user_context_username"):
+                    real_usernames.add(state.get("user_context_username"))
+                
+                # Register all people/partners from the analytics metrics to ensure they are captured
+                metrics = analytics_payload.get("metrics", {})
+                for key in ("partners", "engagers"):
+                    rows = metrics.get(key)
+                    if rows:
+                        for row in rows:
+                            name = row.get("name")
+                            if name:
+                                real_usernames.add(str(name))
+                
+                add_known_entities(list(real_usernames))
+                
+                anonymized_query = privatize_context(state["query"])
+                anonymized_context = privatize_context(context)
+                anonymized_chat_text = privatize_context(chat_text) if chat_history else "None"
+                
+                # We also need to privatize the analytics context explicitly
+                anonymized_context = privatize_context(context)
+                
+                prompt = REMOTE_SYNTHESIS_PROMPT.format(
+                    query=anonymized_query, 
+                    context=anonymized_context, 
+                    chat_history=anonymized_chat_text
+                )
+                raw_answer = await _remote_client.generate(prompt)
+                answer = restore_text(raw_answer)
             else:
+                prompt = SYNTHESIS_PROMPT.format(
+                    query=state["query"], 
+                    context=context, 
+                    chat_history=chat_text
+                )
                 answer = await _local_client.generate(prompt)
         except Exception as exc:
             logger.error("Synthesis LLM call failed: %s", exc)
             answer = analytics_payload.get("summary", "Analytics computed from graph.")
-        return {
+            if mode == "remote":
+                answer = restore_text(answer)
+            
+        out = {
             "answer": answer,
             "reasoning": (
                 f"Route: {state.get('route', 'unknown')} | "
                 "Source: graph_analytics_payload"
             ),
         }
+        
+        if state.get("debug_pipeline") and mode == "remote":
+            # Pass debug artifacts through so they get logged via _print_pipeline_debug
+            out["privacy_debug"] = {
+                "anonymized_context": anonymized_context,
+                "remote_prompt": prompt,
+                "anonymized_answer": raw_answer if "raw_answer" in locals() else None,
+            }
+            
+        return out
 
     # Preserve deterministic retrieval direct answers (e.g. meta/count paths).
     # Retrieval sets `answer` directly and can intentionally return no sources.
@@ -258,10 +303,20 @@ async def synthesis_remote_node(state: AgentState) -> dict:
     results = state.get("search_results", [])
     context = _format_context(results)
 
-    # Register known entities (from query analyzer) so the privatizer catches them even without @
-    add_known_entities(state.get("entities", []))
+    # Register known usernames from search results so the privatizer catches them even without @
+    real_usernames = set()
     if state.get("user_context_username"):
-        add_known_entities([state.get("user_context_username")])
+        real_usernames.add(state.get("user_context_username"))
+    for r in results:
+        meta = r.metadata
+        for k in ["account_username", "sender_name", "receiver_name", "commenter_name"]:
+            if val := meta.get(k):
+                real_usernames.add(val)
+        if parts := meta.get("participants"):
+            if isinstance(parts, list):
+                for p in parts:
+                    real_usernames.add(p)
+    add_known_entities(list(real_usernames))
 
     anonymized_query = privatize_context(state["query"])
     anonymized_context = privatize_context(context)

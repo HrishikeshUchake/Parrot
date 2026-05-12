@@ -234,7 +234,21 @@ class PresidioPrivatizer(ContentPrivatizer):
                 - mappings: dict mapping tokens to original values
         """
         # Detect PII using Presidio
-        results = self.analyzer.analyze(text=text, language="en")
+        # We explicitly specify entities to avoid noisy false positives from the default PERSON recognizer
+        # on technical terms like "MLOps" or "React" while still catching explicit USERNAMEs and real PII.
+        target_entities = [
+            "EMAIL_ADDRESS", 
+            "PHONE_NUMBER", 
+            "CREDIT_CARD", 
+            "IP_ADDRESS", 
+            "CRYPTO",
+            "IBAN_CODE",
+            "US_SSN",
+            "US_PASSPORT",
+            "USERNAME",
+            "DATE_TIME"
+        ]
+        results = self.analyzer.analyze(text=text, language="en", entities=target_entities)
 
         if not results:
             return {
@@ -261,6 +275,10 @@ class PresidioPrivatizer(ContentPrivatizer):
 
             # Use a normalized value for checking to ensure case-insensitivity
             normalized_value = original_value.lower()
+            
+            # Treat "@username" and "username" as the exact same entity 
+            if entity_type == "USERNAME" and normalized_value.startswith("@"):
+                normalized_value = normalized_value[1:]
 
             # Check if we've seen this exact value before
             if normalized_value in self.reverse_mappings:
