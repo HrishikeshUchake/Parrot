@@ -266,7 +266,10 @@ _MESSAGE_VECTOR_SEARCH = """
     CALL db.index.vector.queryNodes($index, 50, $embedding)
     YIELD node AS m, score
     WHERE m.user_context_username = $username
-      AND ($partner IS NULL OR m.sender_name = $partner OR m.receiver_name = $partner)
+      AND ($partners IS NULL 
+           OR size($partners) = 0 
+           OR m.sender_name IN $partners 
+           OR m.receiver_name IN $partners)
     RETURN m.id                  AS id,
            m.text                AS text,
            m.sender_name         AS sender_name,
@@ -441,14 +444,22 @@ class VectorStore:
         query_embedding: list[float],
         username: str,
         top_k: int = settings.default_top_k,
-        partner: str | None = None,
+        partner: str | list[str] | None = None,
     ) -> list[dict[str, Any]]:
+        # Normalize partner to a list for consistent handling
+        partners: list[str] | None = None
+        if partner is not None:
+            if isinstance(partner, str):
+                partners = [partner] if partner.strip() else None
+            else:
+                partners = [p for p in partner if p and p.strip()] if partner else None
+        
         params: dict[str, Any] = {
             "index": self._message_index,
             "top_k": top_k,
             "embedding": query_embedding,
             "username": username,
-            "partner": partner,
+            "partners": partners,
         }
         with self._driver.session(database=self._db) as session:
             records = session.run(_MESSAGE_VECTOR_SEARCH, **params).data()

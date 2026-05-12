@@ -755,45 +755,64 @@ async def simple_retrieval_node(state: AgentState) -> dict:
             "answer": f"There are {count} posts in the database{scope}.",
         }
 
-    # Safety net: detect a conversation partner even when LLM misroutes as factual_lookup
-    conversation_partner: str | None = None
+    # Safety net: detect conversation partners even when LLM misroutes as factual_lookup
+    conversation_partners: list[str] = []
     if user_context:
         entities = state.get("entities") or []
         candidates = [e.lstrip("@").strip() for e in entities if e.strip()]
         for candidate in candidates:
             # First, check if the candidate exactly matches a partner
             if _has_messages_with(user_context, candidate):
-                conversation_partner = candidate
-                break
-                
-            # If not an exact match, try fuzzy search
-            if (candidate.lower() != user_context.lower()
-                    and candidate.lower() not in _STOP_WORDS
-                    and len(candidate) >= 3):
-                similar = _find_similar_usernames(candidate)
-                if similar:
-                    # Automatically correct the partner to the best matched existing username
-                    candidate = similar[0]
-                    if _has_messages_with(user_context, candidate):
-                        conversation_partner = candidate
-                        break
+                conversation_partners.append(candidate)
+            else:
+                # If not an exact match, try fuzzy search
+                if (candidate.lower() != user_context.lower()
+                        and candidate.lower() not in _STOP_WORDS
+                        and len(candidate) >= 3):
+                    similar = _find_similar_usernames(candidate)
+                    if similar:
+                        # Automatically correct the partner to the best matched existing username
+                        corrected = similar[0]
+                        if _has_messages_with(user_context, corrected):
+                            conversation_partners.append(corrected)
                         
-        if not conversation_partner and candidates and state.get("intent") == "summary":
-            # Fallback if no exact or fuzzy matched partner had messages
-            conversation_partner = candidates[0]
+        if not conversation_partners and candidates and state.get("intent") == "summary":
+            # Fallback if no exact or fuzzy matched partners had messages
+            conversation_partners = candidates
 
-    # Guard: named partner has no messages → return did-you-mean instead of hallucinating
-    if conversation_partner and user_context and not _has_messages_with(user_context, conversation_partner):
-        similar = _find_similar_usernames(conversation_partner)
-        if similar:
-            suggestions = ", ".join(f"**{u}**" for u in similar)
-            answer = (
-                f"I couldn't find any messages with '{conversation_partner}'. "
-                f"Did you mean one of these: {suggestions}?"
+    # Guard: named partners have no messages → return did-you-mean instead of hallucinating
+    if conversation_partners and user_context:
+        # Check if any of the partners have messages; filter out those that don't
+        valid_partners = []
+        invalid_partners = []
+        for partner in conversation_partners:
+            if _has_messages_with(user_context, partner):
+                valid_partners.append(partner)
+            else:
+                invalid_partners.append(partner)
+        
+        # If some partners had no messages, suggest alternatives for them
+        if invalid_partners and not valid_partners:
+            # All partners are invalid, suggest alternatives
+            suggestions_per_partner = {}
+            for partner in invalid_partners:
+                similar = _find_similar_usernames(partner)
+                if similar:
+                    suggestions_per_partner[partner] = ", ".join(f"**{u}**" for u in similar)
+            
+            suggestions_str = "\n".join(
+                f"- For **{p}**: {suggestions_per_partner[p]}"
+                for p in invalid_partners if p in suggestions_per_partner
             )
-        else:
-            answer = f"I couldn't find any messages with '{conversation_partner}' in your conversation history."
-        return {"search_results": [], "answer": answer}
+            if suggestions_str:
+                answer = (
+                    f"I couldn't find any messages with these partners. Here are suggestions:\n{suggestions_str}"
+                )
+            else:
+                answer = f"I couldn't find any messages with {', '.join(f'**{p}**' for p in invalid_partners)}."
+            return {"search_results": [], "answer": answer}
+        
+        conversation_partners = valid_partners
 
     metadata_filter = state.get("filters") or None
     if user_context:
@@ -813,7 +832,7 @@ async def simple_retrieval_node(state: AgentState) -> dict:
             query_embedding=query_embedding,
             username=user_context,
             top_k=max(3, settings.default_top_k // 2),
-            partner=conversation_partner,
+            partner=conversation_partners if conversation_partners else None,
         )
         comment_hits = _store.similarity_search_comments(
             query_embedding=query_embedding,
@@ -893,8 +912,8 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
         if cached is not None:
             return cached
 
-    # For summary intent with a named entity, filter messages to that conversation partner
-    conversation_partner: str | None = None
+    # For summary intent with a named entity, filter messages to those conversation partners
+    conversation_partners: list[str] = []
     if state.get("intent") == "summary":
         entities = state.get("entities") or []
         candidates = [e.lstrip("@").strip() for e in entities if e.strip()]
@@ -902,28 +921,48 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
             if (candidate.lower() != (user_context or "").lower()
                     and candidate.lower() not in _STOP_WORDS
                     and len(candidate) >= 3):
-                conversation_partner = candidate
-                break
+                conversation_partners.append(candidate)
 
-    # Guard: if a partner was named but has no messages, suggest similar users
-    if conversation_partner and user_context and not _has_messages_with(user_context, conversation_partner):
-        similar = _find_similar_usernames(conversation_partner)
-        if similar:
-            suggestions = ", ".join(f"**{u}**" for u in similar)
-            answer = (
-                f"I couldn't find any messages with '{conversation_partner}'. "
-                f"Did you mean one of these: {suggestions}?"
+    # Guard: if partners were named but have no messages, suggest similar users
+    if conversation_partners and user_context:
+        # Check if any of the partners have messages; filter out those that don't
+        valid_partners = []
+        invalid_partners = []
+        for partner in conversation_partners:
+            if _has_messages_with(user_context, partner):
+                valid_partners.append(partner)
+            else:
+                invalid_partners.append(partner)
+        
+        # If some partners had no messages, suggest alternatives for them
+        if invalid_partners and not valid_partners:
+            # All partners are invalid, suggest alternatives
+            suggestions_per_partner = {}
+            for partner in invalid_partners:
+                similar = _find_similar_usernames(partner)
+                if similar:
+                    suggestions_per_partner[partner] = ", ".join(f"**{u}**" for u in similar)
+            
+            suggestions_str = "\n".join(
+                f"- For **{p}**: {suggestions_per_partner[p]}"
+                for p in invalid_partners if p in suggestions_per_partner
             )
-        else:
-            answer = f"I couldn't find any messages with '{conversation_partner}' in your conversation history."
-        return {"search_results": [], "answer": answer}
+            if suggestions_str:
+                answer = (
+                    f"I couldn't find any messages with these partners. Here are suggestions:\n{suggestions_str}"
+                )
+            else:
+                answer = f"I couldn't find any messages with {', '.join(f'**{p}**' for p in invalid_partners)}."
+            return {"search_results": [], "answer": answer}
+        
+        conversation_partners = valid_partners
 
     # Step 1 – hybrid multi-query retrieval
     results: list[SearchResult] = []
     per_query_k = max(settings.advanced_top_k // max(1, len(queries)), 3)
 
-    # When summarizing a specific conversation, skip general post search to avoid contamination
-    if not conversation_partner:
+    # When summarizing specific conversations, skip general post search to avoid contamination
+    if not conversation_partners:
         for q in queries:
             metadata_filter = {
                 "user_context_username": user_context} if user_context else None
@@ -943,12 +982,12 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
                 query_embedding=emb,
                 username=user_context,
                 top_k=per_query_k,
-                partner=conversation_partner,
+                partner=conversation_partners if conversation_partners else None,
             ):
                 results.append(_to_message_result(h))
 
-            # Skip comments and threads when filtered to a specific partner
-            if not conversation_partner:
+            # Skip comments and threads when filtered to specific partners
+            if not conversation_partners:
                 for h in _store.similarity_search_comments(
                     query_embedding=emb,
                     username=user_context,
@@ -979,7 +1018,7 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
         "  Deduped Results: %d\n",
         user_context,
         queries,
-        conversation_partner,
+        ", ".join(conversation_partners) if conversation_partners else "None",
         len(results),
     )
     for line in _result_debug_summary(results):
