@@ -112,6 +112,9 @@ class ContentPrivatizer:
         # TODO: Implement context-level sanitization
         raise NotImplementedError("Subclass must implement privatize_context()")
 
+    def add_known_entities(self, entities: list[str]) -> None:
+        """Dynamically add specific known entities (like un-@'d usernames) to ensure they are caught."""
+        pass
 
 class NoOpPrivatizer(ContentPrivatizer):
     """Pass-through privatizer that returns content unchanged.
@@ -191,6 +194,29 @@ class PresidioPrivatizer(ContentPrivatizer):
         self.reverse_mappings = {}  # original value -> token (for consistency)
         self.counters = {}  # entity_type -> count
 
+    def add_known_entities(self, entities: list[str]) -> None:
+        """Dynamically add specific known entities (like un-@'d usernames) to ensure they are caught."""
+        from presidio_analyzer import Pattern, PatternRecognizer
+        import re
+        
+        for e in entities:
+            e = e.strip().lstrip("@")
+            if not e or len(e) < 3:
+                continue
+                
+            # Create an exact word boundary regex for this entity
+            pattern = Pattern(
+                name=f"known_entity_{e}",
+                regex=rf"(?i)\b{re.escape(e)}\b",
+                score=1.0
+            )
+            # Add it to the analyzer registry as a USERNAME
+            recognizer = PatternRecognizer(
+                supported_entity="USERNAME",
+                patterns=[pattern]
+            )
+            self.analyzer.registry.add_recognizer(recognizer)
+
     def anonymize(self, text: str) -> dict:
         """Detect and anonymize PII in text with consistent tokens.
 
@@ -208,7 +234,22 @@ class PresidioPrivatizer(ContentPrivatizer):
                 - mappings: dict mapping tokens to original values
         """
         # Detect PII using Presidio
-        results = self.analyzer.analyze(text=text, language="en")
+        # We explicitly specify entities to avoid noisy false positives from the default PERSON recognizer
+        # on technical terms like "MLOps" or "React" while still catching explicit USERNAMEs and real PII.
+        target_entities = [
+            "EMAIL_ADDRESS", 
+            "PHONE_NUMBER", 
+            "CREDIT_CARD", 
+            "IP_ADDRESS", 
+            "CRYPTO",
+            "IBAN_CODE",
+            "US_SSN",
+            "US_PASSPORT",
+            "USERNAME",
+            "DATE_TIME",
+            "LOCATION"
+        ]
+        results = self.analyzer.analyze(text=text, language="en", entities=target_entities)
 
         if not results:
             return {
@@ -235,6 +276,10 @@ class PresidioPrivatizer(ContentPrivatizer):
 
             # Use a normalized value for checking to ensure case-insensitivity
             normalized_value = original_value.lower()
+            
+            # Treat "@username" and "username" as the exact same entity 
+            if entity_type == "USERNAME" and normalized_value.startswith("@"):
+                normalized_value = normalized_value[1:]
 
             # Check if we've seen this exact value before
             if normalized_value in self.reverse_mappings:

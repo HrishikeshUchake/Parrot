@@ -13,6 +13,7 @@ class AgentState(TypedDict):
     llm_mode: NotRequired[str]              # "remote" | "local"
     debug_pipeline: NotRequired[bool]
     session_id: NotRequired[str]
+    chat_history: NotRequired[list[dict]]   # Stores previous conversation context
     # ── After QueryAnalyzer
     intent: str
     entities: list[str]

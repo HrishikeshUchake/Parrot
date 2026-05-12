@@ -714,16 +714,6 @@ async def simple_retrieval_node(state: AgentState) -> dict:
     """Vector + keyword hybrid search for a single query."""
     user_context = _extract_user_context(state)
 
-    query_embedding = _embedder.encode(state["query"]) if user_context else None
-
-    cached = _try_retrieval_cache(
-        state=state,
-        user_context=user_context,
-        query_embedding=query_embedding,
-    )
-    if cached is not None:
-        return cached
-
     # Handle identity queries directly from user context
     if state.get("intent") == "identity":
         if user_context:
@@ -754,16 +744,16 @@ async def simple_retrieval_node(state: AgentState) -> dict:
             "answer": f"There are {count} posts in the database{scope}.",
         }
 
-    # Safety net: detect conversation partners even when LLM misroutes as factual_lookup
-    conversation_partners: list[str] = []
+    # Safety net: detect a conversation partner even when LLM misroutes as factual_lookup
+    conversation_partner: str | None = None
     if user_context:
         entities = state.get("entities") or []
         candidates = [e.lstrip("@").strip() for e in entities if e.strip()]
         for candidate in candidates:
             # First, check if the candidate exactly matches a partner
             if _has_messages_with(user_context, candidate):
-                conversation_partners.append(candidate)
-                continue
+                conversation_partner = candidate
+                break
                 
             # If not an exact match, try fuzzy search
             if (candidate.lower() != user_context.lower()
@@ -772,40 +762,27 @@ async def simple_retrieval_node(state: AgentState) -> dict:
                 similar = _find_similar_usernames(candidate)
                 if similar:
                     # Automatically correct the partner to the best matched existing username
-                    fuzzy_candidate = similar[0]
-                    if _has_messages_with(user_context, fuzzy_candidate):
-                        conversation_partners.append(fuzzy_candidate)
-                        continue
+                    candidate = similar[0]
+                    if _has_messages_with(user_context, candidate):
+                        conversation_partner = candidate
+                        break
                         
-            # Keep unrecognized ones but don't add to partners yet 
-            # Or we could just ignore them if no messages exist.
-
-    # Fallback to general candidates if none resolved to actual conversation partners yet 
-    if not conversation_partners and user_context:
-        entities = state.get("entities") or []
-        candidates = [e.lstrip("@").strip() for e in entities if e.strip() and e.lower() != user_context.lower() and e.lower() not in _STOP_WORDS and len(e) >= 3]
-        if candidates:
-             conversation_partners = [candidates[0]]
+        if not conversation_partner and candidates and state.get("intent") == "summary":
+            # Fallback if no exact or fuzzy matched partner had messages
+            conversation_partner = candidates[0]
 
     # Guard: named partner has no messages → return did-you-mean instead of hallucinating
-    if conversation_partners and user_context:
-        invalid_partner = None
-        for p in conversation_partners:
-            if not _has_messages_with(user_context, p):
-                invalid_partner = p
-                break
-        
-        if invalid_partner:
-            similar = _find_similar_usernames(invalid_partner)
-            if similar:
-                suggestions = ", ".join(f"**{u}**" for u in similar)
-                answer = (
-                    f"I couldn't find any messages with '{invalid_partner}'. "
-                    f"Did you mean one of these: {suggestions}?"
-                )
-            else:
-                answer = f"I couldn't find any messages with '{invalid_partner}' in your conversation history."
-            return {"search_results": [], "answer": answer}
+    if conversation_partner and user_context and not _has_messages_with(user_context, conversation_partner):
+        similar = _find_similar_usernames(conversation_partner)
+        if similar:
+            suggestions = ", ".join(f"**{u}**" for u in similar)
+            answer = (
+                f"I couldn't find any messages with '{conversation_partner}'. "
+                f"Did you mean one of these: {suggestions}?"
+            )
+        else:
+            answer = f"I couldn't find any messages with '{conversation_partner}' in your conversation history."
+        return {"search_results": [], "answer": answer}
 
     metadata_filter = state.get("filters") or None
     if user_context:
@@ -819,12 +796,13 @@ async def simple_retrieval_node(state: AgentState) -> dict:
     )
 
     # Add user-scoped message/comment semantic hits if user context is available.
-    if user_context and query_embedding is not None:
+    if user_context:
+        query_embedding = _embedder.encode(state["query"])
         message_hits = _store.similarity_search_messages(
             query_embedding=query_embedding,
             username=user_context,
             top_k=max(3, settings.default_top_k // 2),
-            partners=conversation_partners if conversation_partners else None,
+            partner=conversation_partner,
         )
         comment_hits = _store.similarity_search_comments(
             query_embedding=query_embedding,
@@ -857,18 +835,7 @@ async def simple_retrieval_node(state: AgentState) -> dict:
     )
     for line in _result_debug_summary(results):
         logger.info("  %s", line)
-    _save_retrieval_cache(
-        state=state,
-        user_context=user_context,
-        search_results=results,
-        analytics_payload=None,
-        query_embedding=query_embedding,
-    )
-
-    return {
-        "search_results": results,
-        "cache_hit": False,
-    }
+    return {"search_results": results}
 
 
 async def advanced_retrieval_node(state: AgentState) -> dict:
@@ -891,18 +858,9 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
     if state["query"] not in queries:
         queries = [state["query"]] + queries
     user_context = _extract_user_context(state)
-    query_embedding = _embedder.encode(state["query"]) if user_context else None
-
-    cached = _try_retrieval_cache(
-        state=state,
-        user_context=user_context,
-        query_embedding=query_embedding,
-    )
-    if cached is not None:
-        return cached
 
     # For summary intent with a named entity, filter messages to that conversation partner
-    conversation_partners: list[str] = []
+    conversation_partner: str | None = None
     if state.get("intent") == "summary":
         entities = state.get("entities") or []
         candidates = [e.lstrip("@").strip() for e in entities if e.strip()]
@@ -910,50 +868,28 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
             if (candidate.lower() != (user_context or "").lower()
                     and candidate.lower() not in _STOP_WORDS
                     and len(candidate) >= 3):
-                
-                # Check for exact matches
-                if user_context and _has_messages_with(user_context, candidate):
-                    conversation_partners.append(candidate)
-                    continue
-
-                # Fuzzy matches
-                if user_context:
-                    similar = _find_similar_usernames(candidate)
-                    if similar:
-                        fuzzy_candidate = similar[0]
-                        if _has_messages_with(user_context, fuzzy_candidate):
-                            conversation_partners.append(fuzzy_candidate)
-                            continue
-                
-                # If we get here fallback
-                conversation_partners.append(candidate)
+                conversation_partner = candidate
+                break
 
     # Guard: if a partner was named but has no messages, suggest similar users
-    if conversation_partners and user_context:
-        invalid_partner = None
-        for p in conversation_partners:
-            if not _has_messages_with(user_context, p):
-                invalid_partner = p
-                break
-                
-        if invalid_partner:
-            similar = _find_similar_usernames(invalid_partner)
-            if similar:
-                suggestions = ", ".join(f"**{u}**" for u in similar)
-                answer = (
-                    f"I couldn't find any messages with '{invalid_partner}'. "
-                    f"Did you mean one of these: {suggestions}?"
-                )
-            else:
-                answer = f"I couldn't find any messages with '{invalid_partner}' in your conversation history."
-            return {"search_results": [], "answer": answer}
+    if conversation_partner and user_context and not _has_messages_with(user_context, conversation_partner):
+        similar = _find_similar_usernames(conversation_partner)
+        if similar:
+            suggestions = ", ".join(f"**{u}**" for u in similar)
+            answer = (
+                f"I couldn't find any messages with '{conversation_partner}'. "
+                f"Did you mean one of these: {suggestions}?"
+            )
+        else:
+            answer = f"I couldn't find any messages with '{conversation_partner}' in your conversation history."
+        return {"search_results": [], "answer": answer}
 
     # Step 1 – hybrid multi-query retrieval
     results: list[SearchResult] = []
     per_query_k = max(settings.advanced_top_k // max(1, len(queries)), 3)
 
     # When summarizing a specific conversation, skip general post search to avoid contamination
-    if not conversation_partners:
+    if not conversation_partner:
         for q in queries:
             metadata_filter = {
                 "user_context_username": user_context} if user_context else None
@@ -968,17 +904,17 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
     if user_context:
         # Add semantic matches from user messages/comments/threads for each sub-query.
         for q in queries:
-            emb = query_embedding if q == state["query"] and query_embedding is not None else _embedder.encode(q)
+            emb = _embedder.encode(q)
             for h in _store.similarity_search_messages(
                 query_embedding=emb,
                 username=user_context,
                 top_k=per_query_k,
-                partners=conversation_partners if conversation_partners else None,
+                partner=conversation_partner,
             ):
                 results.append(_to_message_result(h))
 
             # Skip comments and threads when filtered to a specific partner
-            if not conversation_partners:
+            if not conversation_partner:
                 for h in _store.similarity_search_comments(
                     query_embedding=emb,
                     username=user_context,
@@ -1009,7 +945,7 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
         "  Deduped Results: %d\n",
         user_context,
         queries,
-        conversation_partners,
+        conversation_partner,
         len(results),
     )
     for line in _result_debug_summary(results):
@@ -1067,18 +1003,7 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
     )
     for line in _result_debug_summary(results):
         logger.info("  %s", line)
-    _save_retrieval_cache(
-        state=state,
-        user_context=user_context,
-        search_results=results,
-        analytics_payload=None,
-        query_embedding=query_embedding,
-    )
-
-    return {
-        "search_results": results,
-        "cache_hit": False,
-    }
+    return {"search_results": results}
 
 
 async def analytics_retrieval_node(state: AgentState) -> dict:
@@ -1086,14 +1011,6 @@ async def analytics_retrieval_node(state: AgentState) -> dict:
     query = (state.get("query") or "").lower()
     user_context = _extract_user_context(state)
     analytics_kind = state.get("analytics_kind", "none")
-
-    cached = _try_retrieval_cache(
-        state=state,
-        user_context=user_context,
-        query_embedding=None,
-    )
-    if cached is not None:
-        return cached
 
     if not user_context:
         payload = {
@@ -1127,19 +1044,8 @@ async def analytics_retrieval_node(state: AgentState) -> dict:
     for line in _analytics_debug_lines(payload):
         logger.info("  %s", line)
 
-    result = {
+    return {
         "search_results": [],
         "analytics_payload": payload,
         "answer": payload.get("summary", ""),
-        "cache_hit": False,
     }
-
-    _save_retrieval_cache(
-        state=state,
-        user_context=user_context,
-        search_results=[],
-        analytics_payload=payload,
-        query_embedding=None,
-    )
-
-    return result
