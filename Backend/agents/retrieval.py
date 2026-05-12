@@ -744,16 +744,6 @@ async def simple_retrieval_node(state: AgentState) -> dict:
             "answer": "I don't know who you are yet — no user context has been set.",
         }
 
-    # Handle meta-queries directly without retrieval
-    if state.get("intent") == "meta":
-        count = _store.count_for_user(
-            user_context) if user_context else _store.count
-        scope = f" for user '{user_context}'" if user_context else ""
-        return {
-            "search_results": [],
-            "answer": f"There are {count} posts in the database{scope}.",
-        }
-
     # Safety net: detect conversation partners even when LLM misroutes as factual_lookup
     conversation_partners: list[str] = []
     if user_context:
@@ -786,6 +776,56 @@ async def simple_retrieval_node(state: AgentState) -> dict:
         candidates = [e.lstrip("@").strip() for e in entities if e.strip() and e.lower() != user_context.lower() and e.lower() not in _STOP_WORDS and len(e) >= 3]
         if candidates:
              conversation_partners = [candidates[0]]
+
+    # Handle meta-queries and counts directly without retrieval
+    query_lower = state["query"].lower()
+    is_count_query = state.get("intent") == "meta" or (
+        state.get("intent") == "factual_lookup" and 
+        ("how many" in query_lower or "count" in query_lower or "total " in query_lower)
+    )
+
+    if is_count_query:
+        if "message" in query_lower:
+            if user_context and conversation_partners:
+                partner_counts = []
+                for p in conversation_partners:
+                    cypher = "MATCH (m:Message) WHERE m.user_context_username = $username AND (m.sender_name = $partner OR m.receiver_name = $partner) RETURN count(m) AS n"
+                    rows = _store.run_query(cypher, username=user_context, partner=p)
+                    n = rows[0]["n"] if rows else 0
+                    partner_counts.append(f"{n} message{'s' if n != 1 else ''} with {p}")
+                answer = "You have exchanged " + " and ".join(partner_counts) + "."
+            else:
+                if user_context:
+                    cypher = "MATCH (m:Message) WHERE m.user_context_username = $username RETURN count(m) AS n"
+                    rows = _store.run_query(cypher, username=user_context)
+                else:
+                    cypher = "MATCH (m:Message) RETURN count(m) AS n"
+                    rows = _store.run_query(cypher)
+                n = rows[0]["n"] if rows else 0
+                scope = f" for user '{user_context}'" if user_context else ""
+                answer = f"There are {n} messages in total{scope}."
+            return {"search_results": [], "answer": answer}
+            
+        elif "comment" in query_lower:
+            if user_context:
+                cypher = "MATCH (c:Comment) WHERE c.user_context_username = $username RETURN count(c) AS n"
+                rows = _store.run_query(cypher, username=user_context)
+            else:
+                cypher = "MATCH (c:Comment) RETURN count(c) AS n"
+                rows = _store.run_query(cypher)
+            n = rows[0]["n"] if rows else 0
+            scope = f" for user '{user_context}'" if user_context else ""
+            answer = f"There are {n} comments in total{scope}."
+            return {"search_results": [], "answer": answer}
+
+        else:
+            count = _store.count_for_user(
+                user_context) if user_context else _store.count
+            scope = f" for user '{user_context}'" if user_context else ""
+            return {
+                "search_results": [],
+                "answer": f"There are {count} posts in the database{scope}.",
+            }
 
     # Guard: named partner has no messages → return did-you-mean instead of hallucinating
     if conversation_partners and user_context:
