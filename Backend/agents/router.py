@@ -34,7 +34,7 @@ async def router_node(state: AgentState) -> dict:
         return {"route": "simple"}
 
     ADVANCED_INTENTS = {"trend_analysis",
-                        "comparison", "open_ended", "summary"}
+                        "comparison", "summary"}
     llm_client = _resolve_llm_client(state)
 
     if requires_graph:

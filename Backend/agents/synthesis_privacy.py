@@ -29,6 +29,9 @@ _privatizer = _init_privatizer()
 def privatize_context(text: str) -> str:
     return _privatizer.privatize_context(text)
 
+def add_known_entities(entities: list[str]) -> None:
+    if hasattr(_privatizer, "add_known_entities"):
+        _privatizer.add_known_entities(entities)
 
 def restore_text(text: str) -> str:
     if hasattr(_privatizer, "restore"):

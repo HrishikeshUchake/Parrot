@@ -31,6 +31,9 @@ Answering rules:
 User question:
 {query}
 
+Recent Conversation History:
+{chat_history}
+
 Retrieved context:
 {context}
 

@@ -61,7 +61,7 @@ class OpenRouterClient:
         self._temperature = temperature
         self._max_tokens = max_tokens
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8))
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8), reraise=True)
     async def generate(self, prompt: str) -> str:
         """Generate response from anonymized prompt.
 
@@ -134,7 +134,7 @@ BAD OUTPUT: "[PERSON_2] can be reached via email or phone" (WRONG - renumbered a
 
 Your task is to be helpful while STRICTLY preserving all anonymization tokens."""
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8))
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8), reraise=True)
     async def chat(self, messages: list[dict]) -> str:
         """Chat with message history.
 
