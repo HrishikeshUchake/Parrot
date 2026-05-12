@@ -401,6 +401,43 @@ def _print_pipeline_debug(result: dict) -> None:
         print(f"Sub-queries: {sub_queries}")
 
     print(f"Router: route={result.get('route', '?')}")
+
+    if "cache_hit" in result:
+        print(
+            "Cache: "
+            f"hit={result.get('cache_hit')} | "
+            f"type={result.get('cache_hit_type')}"
+        )
+
+    cache_debug = result.get("cache_debug")
+
+    if cache_debug:
+        print(
+            "Cache: "
+            f"hit={cache_debug.get('hit')} | "
+            f"type={cache_debug.get('hit_type')} | "
+            f"reason={cache_debug.get('reason', '')}"
+        )
+
+        if cache_debug.get("normalized_query"):
+            print(
+                f"Cache normalized query: "
+                f"{cache_debug.get('normalized_query')}"
+            )
+
+        if cache_debug.get("similarity") is not None:
+            print(
+                f"Cache similarity: "
+                f"{cache_debug.get('similarity')}"
+            )
+
+    elif "cache_hit" in result:
+        print(
+            "Cache: "
+            f"hit={result.get('cache_hit')} | "
+            f"type={result.get('cache_hit_type')} | "
+            f"similarity={result.get('cache_similarity')}"
+        )
     if result.get("llm_mode"):
         print(f"LLM mode: {result.get('llm_mode')}")
 

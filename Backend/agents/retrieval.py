@@ -714,6 +714,17 @@ async def simple_retrieval_node(state: AgentState) -> dict:
     """Vector + keyword hybrid search for a single query."""
     user_context = _extract_user_context(state)
 
+    query_embedding_for_cache = None
+    if user_context:
+        query_embedding_for_cache = _embedder.encode(state["query"])
+        cached = _try_retrieval_cache(
+            state,
+            user_context,
+            query_embedding=query_embedding_for_cache,
+        )
+        if cached is not None:
+            return cached
+
     # Handle identity queries directly from user context
     if state.get("intent") == "identity":
         if user_context:
@@ -835,7 +846,19 @@ async def simple_retrieval_node(state: AgentState) -> dict:
     )
     for line in _result_debug_summary(results):
         logger.info("  %s", line)
-    return {"search_results": results}
+    _save_retrieval_cache(
+        state,
+        user_context,
+        results,
+        query_embedding=query_embedding_for_cache,
+    )
+
+    return {
+        "search_results": results,
+        "cache_hit": False,
+        "cache_hit_type": "miss",
+        "cache_similarity": 0.0,
+    }
 
 
 async def advanced_retrieval_node(state: AgentState) -> dict:
@@ -858,6 +881,17 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
     if state["query"] not in queries:
         queries = [state["query"]] + queries
     user_context = _extract_user_context(state)
+
+    query_embedding_for_cache = None
+    if user_context:
+        query_embedding_for_cache = _embedder.encode(state["query"])
+        cached = _try_retrieval_cache(
+            state,
+            user_context,
+            query_embedding=query_embedding_for_cache,
+        )
+        if cached is not None:
+            return cached
 
     # For summary intent with a named entity, filter messages to that conversation partner
     conversation_partner: str | None = None
@@ -1003,7 +1037,19 @@ async def advanced_retrieval_node(state: AgentState) -> dict:
     )
     for line in _result_debug_summary(results):
         logger.info("  %s", line)
-    return {"search_results": results}
+    _save_retrieval_cache(
+        state,
+        user_context,
+        results,
+        query_embedding=query_embedding_for_cache,
+    )
+
+    return {
+        "search_results": results,
+        "cache_hit": False,
+        "cache_hit_type": "miss",
+        "cache_similarity": 0.0,
+    }
 
 
 async def analytics_retrieval_node(state: AgentState) -> dict:
