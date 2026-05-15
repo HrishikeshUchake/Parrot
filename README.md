@@ -36,6 +36,8 @@ Parrot combines multiple specialized agent nodes orchestrated via LangGraph to d
 - Comprehensive test coverage and CI workflows
 - Expanded observability and audit logging
 
+For a detailed view of the system architecture and diagrams, please see [SYSTEM_ARCHITECTURE.md](Documents/SYSTEM_ARCHITECTURE.md).
+
 ## Repository Structure
 
 ```
@@ -79,7 +81,7 @@ Backend/
   requirements.txt             # Python dependencies
 
 Frontend/                       # UI implementation (in progress)
-Documents/                      # Extended documentation (in progress)
+Documents/                      # Extended documentation & system diagrams
 PRIVACY_ARCHITECTURE.md         # Detailed privacy layer documentation
 docker-compose.yml              # Local development environment (Backend + Neo4j)
 Dockerfile                      # Docker image definition for backend
