@@ -26,3 +26,7 @@ httpx
 # Utilities
 python-dotenv
 tenacity
+
+# Privacy & Anonymization
+presidio-analyzer
+spacy
