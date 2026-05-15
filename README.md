@@ -81,8 +81,23 @@ Backend/
 Frontend/                       # UI implementation (in progress)
 Documents/                      # Extended documentation (in progress)
 PRIVACY_ARCHITECTURE.md         # Detailed privacy layer documentation
-docker-compose.yml              # Local development environment
+docker-compose.yml              # Local development environment (Backend + Neo4j)
+Dockerfile                      # Docker image definition for backend
 ```
+
+## Getting Started (Docker)
+
+The easiest way to spin up the Parrot backend and Neo4j database is using Docker Compose. This ensures a unified environment and eliminates local dependency issues.
+
+1. **Build and start the containers**:
+   ```bash
+   docker compose up --build
+   ```
+2. **Access the services**:
+   - **FastAPI Backend**: `http://localhost:8000`
+   - **Neo4j Browser**: `http://localhost:7474` (Credentials: `neo4j` / `password`)
+
+*Note: The `docker-compose.yml` mounts the `./Backend` directory as a volume, enabling hot-reloading for local development. It is also configured to access local Ollama instances via `host.docker.internal`.*
 
 ## Architecture Overview
 
