@@ -712,34 +712,6 @@ embeddings = service.embed_texts(["test sentence"])
 print(embeddings[0].shape)  # Should show (1024,)
 ```
 
-## Roadmap and Future Enhancements
-
-### Near-Term (Q2-Q3 2024)
-
-- [ ] Frontend implementation (React/Next.js) in `Frontend/`
-- [ ] Comprehensive test suite (unit, integration, e2e)
-- [ ] GitHub Actions CI/CD workflows
-- [ ] Production deployment guide (Kubernetes, Docker Compose)
-- [ ] Extended observability and structured logging
-- [ ] Multi-user session management
-
-### Medium-Term (Q4 2024 - Q1 2025)
-
-- [ ] Advanced caching strategies (Redis integration)
-- [ ] Custom entity recognition models
-- [ ] Fine-tuned local models for routing/analysis
-- [ ] Graph query optimization and indexing
-- [ ] Batch query processing API
-- [ ] Audit logging and compliance reporting
-
-### Long-Term
-
-- [ ] Multi-language support via polyglot NLP
-- [ ] Real-time streaming RAG for live data
-- [ ] Distributed graph processing for large-scale data
-- [ ] Advanced reasoning with chain-of-thought
-- [ ] Custom LLM model training pipeline
-- [ ] Federated learning for privacy-preserving multi-party scenarios
 
 ## Known Limitations
 
@@ -749,61 +721,6 @@ print(embeddings[0].shape)  # Should show (1024,)
 - Ollama performance varies significantly by model size and hardware
 - No built-in support for real-time updates; batch import only
 
-## Contributing
-
-We welcome contributions! To get started:
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/your-feature-name`
-3. Make changes following the existing code style
-4. Add tests for new functionality
-5. Submit a pull request with a clear description
-
-**Code Style:**
-- Python: PEP 8 with 100-char line limit
-- Type hints required for all functions
-- Docstrings for public APIs
-- No commented-out code blocks
-
-**Before Submitting:**
-```bash
-# Run linters and type checkers
-python -m pylint Backend/
-python -m mypy Backend/
-
-# Run tests
-pytest tests/
-```
-
-## Support and Issues
-
-For bugs, feature requests, or questions:
-
-1. Check existing [GitHub Issues](https://github.com/your-org/parrot/issues)
-2. Search [Discussions](https://github.com/your-org/parrot/discussions) for similar questions
-3. Review [PRIVACY_ARCHITECTURE.md](./PRIVACY_ARCHITECTURE.md) for privacy-specific topics
-4. Create a new issue with:
-   - Clear description of problem/request
-   - Steps to reproduce (for bugs)
-   - Environment details (Python version, OS, Neo4j version)
-   - Expected vs. actual behavior
-
-## License
-
-This project is licensed under the [MIT License](./LICENSE).
-
-## Citation
-
-If you use Parrot in academic research or publications, please cite:
-
-```bibtex
-@software{parrot2024,
-  title={Parrot: Agentic Graph-RAG System for Social Data Analysis},
-  author={Your Organization},
-  year={2024},
-  url={https://github.com/your-org/parrot}
-}
-```
 
 ## Acknowledgments
 
