@@ -53,7 +53,7 @@ class OpenRouterClient:
 
         if not api_key:
             raise ValueError(
-                "API key is required. Set OPENAI_API_KEY or OPENROUTER_API_KEY environment variable."
+                "API key is required. Set REMOTE_LLM_API_KEY or OPENROUTER_API_KEY environment variable."
             )
 
         self._api_key = api_key

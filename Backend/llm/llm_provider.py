@@ -23,7 +23,7 @@ class OpenAIProvider:
 
     async def generate(self, prompt: str, system: str = "") -> str:
         if not self.api_key:
-            raise RuntimeError("OPENAI_API_KEY is not set for remote synthesis mode")
+            raise RuntimeError("REMOTE_LLM_API_KEY is not set for remote synthesis mode")
 
         try:
             headers = {"Authorization": f"Bearer {self.api_key}"}

@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     openrouter_model: str = "gtp-4o-mini"  # or other models
 
     # --- OpenAI / Remote LLM ---
-    openai_api_key: str = ""                 # Set OPENAI_API_KEY env var
+    openai_api_key: str = ""                 # Set REMOTE_LLM_API_KEY env var
     openai_model: str = "gpt-4o-mini"       # OpenAI model name
 
     # --- LLM Common Settings ---
