@@ -1,4 +1,49 @@
-# OS / MacOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local environment files
+.env
+.env.*
+!.env_example
+**/.env
+**/.env.*
+!**/.env_example
+
+# Node / frontend
+node_modules/
+frontend/node_modules/
+Frontend/node_modules/
+dist/
+frontend/dist/
+Frontend/dist/
+coverage/
+
+# IDE / editor
+.idea/
+.vscode/
+
+# Misc
+*.log# OS / MacOS
 .DS_Store
 
 # Python
