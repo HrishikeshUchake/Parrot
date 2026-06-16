@@ -297,7 +297,7 @@ PRIVACY_ANONYMIZER=presidio
 
 # ─── Optional: Remote Synthesis ───
 # SYNTHESIS_LLM_BACKEND=openai
-# OPENAI_API_KEY=your_openai_api_key_here
+# REMOTE_LLM_API_KEY=your_api_key_here
 # OPENAI_MODEL=gpt-4o-mini
 ```
 
@@ -417,7 +417,7 @@ LLM_MAX_TOKENS=1024
 **Remote Inference (OpenAI or Compatible):**
 ```env
 SYNTHESIS_LLM_BACKEND=openai
-OPENAI_API_KEY=your_openai_api_key_here
+REMOTE_LLM_API_KEY=your_api_key_here
 OPENAI_MODEL=gpt-4o-mini
 OPENAI_BASE_URL=https://api.openai.com/v1  # Optional for custom gateways
 ```
@@ -427,7 +427,7 @@ OPENAI_BASE_URL=https://api.openai.com/v1  # Optional for custom gateways
 ANALYZER_LLM_BACKEND=ollama
 ROUTER_LLM_BACKEND=ollama
 SYNTHESIS_LLM_BACKEND=openai
-OPENAI_API_KEY=your_openai_api_key_here
+REMOTE_LLM_API_KEY=your_api_key_here
 ```
 
 ### Neo4j Configuration
