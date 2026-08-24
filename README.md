@@ -1,5 +1,7 @@
 # Parrot: Agentic Graph-RAG System for Social Data Analysis
 
+https://docs.google.com/presentation/d/1D73lFssUi_TNW2H9O_EDqh-aH-wN6g1L8_holvc_OPE/edit?usp=sharing
+
 Parrot is a production-ready, backend-first agentic system for intelligent retrieval and synthesis of answers from social-style data (posts, comments, and messages) using a graph-enhanced Retrieval-Augmented Generation (RAG) pipeline with privacy-first data handling.
 
 ## Overview
@@ -30,11 +32,6 @@ Parrot combines multiple specialized agent nodes orchestrated via LangGraph to d
 - Privacy layer with Presidio-based PII anonymization
 - Neo4j graph enrichment in advanced retrieval mode
 - Remote and local LLM synthesis with fallback behavior
-
-**In Development:**
-- Frontend implementation (UI scaffold in place)
-- Comprehensive test coverage and CI workflows
-- Expanded observability and audit logging
 
 For a detailed view of the system architecture and diagrams, please see [SYSTEM_ARCHITECTURE.md](Documents/SYSTEM_ARCHITECTURE.md).
 
@@ -608,12 +605,6 @@ See [PRIVACY_ARCHITECTURE.md](./PRIVACY_ARCHITECTURE.md) for detailed architectu
 
 ### Data Security Best Practices
 
-**Credentials Management:**
-- Never commit `.env` files or credentials to version control
-- Use environment variable injection in production
-- Rotate API keys regularly
-- Store secrets in dedicated secret management systems (AWS Secrets Manager, HashiCorp Vault, etc.)
-
 **Network Security:**
 - Run Neo4j on localhost or private networks in development
 - Enforce encryption in transit (TLS) for production deployments
@@ -651,83 +642,6 @@ See [PRIVACY_ARCHITECTURE.md](./PRIVACY_ARCHITECTURE.md) for detailed architectu
    - Consider field-level encryption for sensitive data
    - Implement data anonymization for backups
 
-## Development and Testing
-
-### Local Development Workflow
-
-```bash
-# 1. Start services
-docker-compose up -d
-
-# 2. Activate environment
-source .venv/bin/activate
-
-# 3. Run API server with hot reload
-uvicorn Backend.main:app --reload --port 8000
-
-# 4. In another terminal, run CLI queries
-python -m Backend.main --username alice
-
-# 5. Monitor logs and iterate
-tail -f Backend/logs/*.log
-```
-
-### Testing Strategy
-
-Recommended test coverage areas:
-
-**Unit Tests:**
-- Query analyzer intent classification
-- Router decision logic
-- Retrieval ranking and filtering
-- Privacy anonymization and restoration
-
-**Integration Tests:**
-- End-to-end query flow with real Neo4j
-- Multi-backend LLM switching and fallback
-- Data ingestion and embedding generation
-
-**Regression Tests:**
-- User-scoped retrieval filters
-- Privacy mappings for edge cases
-- Cross-version schema migrations
-
-**Performance Benchmarks:**
-```bash
-python -m Backend.scripts.social_query_benchmarks \
-  --queries 100 \
-  --output benchmark_results.json
-```
-
-### Debugging Common Issues
-
-**Neo4j Connection Errors:**
-```python
-# Verify connection in Python REPL
-from Backend.database.repository import get_neo4j_session
-session = get_neo4j_session()
-result = session.run("RETURN 1")
-print(result.single()[0])  # Should print 1
-```
-
-**Ollama Inference Issues:**
-```bash
-# Check Ollama status
-curl http://localhost:11434/api/tags
-
-# Test model inference
-curl -X POST http://localhost:11434/api/generate \
-  -d '{"model": "llama3.2", "prompt": "Hello"}'
-```
-
-**Embedding Service Failures:**
-```python
-# Test embeddings directly
-from Backend.services.embedding_service import EmbeddingService
-service = EmbeddingService()
-embeddings = service.embed_texts(["test sentence"])
-print(embeddings[0].shape)  # Should show (1024,)
-```
 
 
 ## Known Limitations
@@ -736,7 +650,6 @@ print(embeddings[0].shape)  # Should show (1024,)
 - Privacy layer adds 10-20% latency overhead for PII detection
 - Neo4j vector indexes are best for semantic search; keyword filters are separate
 - Ollama performance varies significantly by model size and hardware
-- No built-in support for real-time updates; batch import only
 
 
 ## Acknowledgments
