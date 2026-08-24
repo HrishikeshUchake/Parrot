@@ -43,4 +43,5 @@ coverage/
 .vscode/
 
 # Misc
+.DS_Store
 *.log
